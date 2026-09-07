@@ -4,7 +4,7 @@ import { useState } from 'react';
 
 const SECTIONS = [
   { id: 'quickstart',   label: 'Quickstart' },
-  { id: 'policy',       label: 'Policy Schema' },
+  { id: 'scenario',     label: 'Scenario Spec' },
   { id: 'metrics',      label: 'Metrics' },
   { id: 'langchain',    label: 'LangChain' },
   { id: 'smolagents',   label: 'smolagents' },
@@ -23,84 +23,94 @@ const CONTENT = {
 trace = [
     {
         "thought": "I will run security audit first.",
-        "tool": "security_scan",
-        "tool_input": {"target": "repo"},
+        "action": {"type": "tool_call", "name": "security_scan", "args": {"target": "repo"}},
         "observation": "Vulnerabilities: 0"
     },
     {
         "thought": "Clean. Proceeding to publish release.",
-        "tool": "publish_release",
-        "tool_input": {"tag": "v1.0.0"},
+        "action": {"type": "tool_call", "name": "publish_release", "args": {"tag": "v1.0.0"}},
         "observation": "Published"
     }
 ]
 
 result = evaluate_trace(
-    trace,
-    policy={"required_tools": ["security_scan"], "max_tool_calls": 4}
+    scenario={
+        "scenario_id": "release_gate",
+        "expected_tools":    ["security_scan", "publish_release"],
+        "expected_order":    ["security_scan", "publish_release"],
+        "optimal_step_count": 2,
+    },
+    trace=trace
 )
 
+result.print_diagnostics()     # per-metric breakdown
 print(result.passed)           # True
-print(result.composite_score)  # 0.94`,
+print(result.composite_score)  # 1.00`,
     lang: 'python',
   },
-  policy: {
-    label: 'Policy-as-Code',
-    title: 'Declare rules in YAML or Python',
-    snippet: `# policy.yaml
-required_tools:
-  - run_unit_tests
-  - verify_security_credentials
+  scenario: {
+    label: 'Scenario Spec',
+    title: 'Describe what the agent should do',
+    snippet: `# Pass as a Python dict or load from JSON/YAML
+scenario = {
+    "scenario_id":       "deploy_gate",          # unique identifier
+    "title":            "Cloud Deploy Pipeline",  # human-readable label
+    "domain":           "DevOps",                 # grouping tag
+    "expected_tools":   ["run_unit_tests", "deploy_production"],  # required tools
+    "expected_order":   ["run_unit_tests", "deploy_production"],  # prerequisite order
+    "expected_arguments": {
+        "deploy_production": {"env": "staging"}   # optional arg schema check
+    },
+    "optimal_step_count": 2,                      # ideal trace length for efficiency scoring
+}
 
-forbidden_tools:
-  - force_push_to_main
-
-forbidden_tool_pairs:
-  - [read_user_secrets, send_external_webhook]
-
-max_tool_calls: 6
-min_thought_length: 20
-allow_duplicate_tool_calls: false`,
-    lang: 'yaml',
+result = evaluate_trace(scenario=scenario, trace=agent_trace)`,
+    lang: 'python',
     fields: [
-      { name: 'required_tools',          type: 'list[str]', desc: 'Tools that must be called at least once. Missing any drops policy score to 0.' },
-      { name: 'forbidden_tools',         type: 'list[str]', desc: 'Blacklisted tools. Any call triggers an immediate rejection.' },
-      { name: 'forbidden_tool_pairs',    type: 'list[list]', desc: 'Sequence constraints that disallow pairing tool A with tool B.' },
-      { name: 'max_tool_calls',          type: 'int',       desc: 'Budget ceiling. Exceeding it applies heavy efficiency penalties.' },
-      { name: 'allow_duplicate_tool_calls', type: 'bool',   desc: 'When false, repeated identical calls are flagged as loop thrashing.' },
+      { name: 'scenario_id',         type: 'str',       desc: 'Unique identifier for this evaluation gate. Used in reports and dashboards.' },
+      { name: 'expected_tools',      type: 'list[str]', desc: 'Tools that must appear in the trace. Missing any drops Tool Selection F1 below threshold.' },
+      { name: 'expected_order',      type: 'list[str]', desc: 'Enforces prerequisite ordering. Any inversion zeroes the Call Ordering score.' },
+      { name: 'expected_arguments',  type: 'dict',      desc: 'Optional per-tool argument schema. Mismatches reduce Argument Correctness score.' },
+      { name: 'optimal_step_count',  type: 'int',       desc: 'Target trace length. Excess steps (including redundant/looping calls) penalise Step Efficiency.' },
     ],
   },
   metrics: {
     label: 'Scoring',
     title: 'Four deterministic dimensions',
     metrics: [
-      { name: 'Policy Compliance', weight: '40%', desc: 'Strict adherence to required, forbidden, and sequenced tool rules. Any security violation zeros this score.' },
-      { name: 'Loop Penalty',      weight: '20%', desc: 'Negative score applied when identical tool calls repeat without state change.' },
-      { name: 'Goal Attainment',   weight: '25%', desc: 'Verifies the agent reached a terminal success state with verified artifacts.' },
-      { name: 'ReAct Efficiency',  weight: '15%', desc: 'Ratio of purposeful tool calls to total budget. Penalises erratic step generation.' },
+      { name: 'Tool Selection F1',     weight: '30%', desc: 'Precision and recall over expected_tools. Missing a required tool or calling unexpected tools lowers this score. Threshold: 0.85.' },
+      { name: 'Call Ordering',         weight: '30%', desc: 'Strict enforcement of expected_order prerequisites. Any inversion (e.g. deploy before test) zeros this score. Threshold: 1.00.' },
+      { name: 'Step Efficiency',       weight: '25%', desc: 'Ratio of optimal_step_count to actual steps taken. Repeated identical calls (loop thrashing) are counted as redundant and penalised. Threshold: 0.70.' },
+      { name: 'Reasoning Faithfulness', weight: '15%', desc: 'Verifies each thought is grounded in the preceding observation. Contradictions or fabricated state are flagged as hallucination. Threshold: 0.85.' },
     ],
   },
   langchain: {
     label: 'LangChain',
     title: 'Zero-config callback handler',
-    snippet: `from regression_shield.adapters.langchain import RegressionShieldTracer
+    snippet: `from regression_shield.adapters.langchain import RegressionShieldCallbackHandler
+from regression_shield import evaluate_trace
 
-tracer = RegressionShieldTracer(
-    policy={
-        "required_tools": ["lookup_customer", "validate_policy"],
-        "max_tool_calls": 6
-    }
-)
+# 1. Attach the callback — no changes to your agent code
+handler = RegressionShieldCallbackHandler()
 
-# Attach to any AgentExecutor or LangGraph workflow
 agent_executor.invoke(
     {"input": "Cancel renewal for customer 99401"},
-    config={"callbacks": [tracer]}
+    config={"callbacks": [handler]}
 )
 
-result = tracer.get_evaluation()
-print(result.composite_score)   # 0.96
-print(result.passed)            # True`,
+# 2. Evaluate the captured trace
+result = evaluate_trace(
+    scenario={
+        "scenario_id": "refund_gate",
+        "expected_tools": ["lookup_customer", "validate_policy", "execute_refund"],
+        "expected_order": ["lookup_customer", "validate_policy", "execute_refund"],
+        "optimal_step_count": 3,
+    },
+    trace=handler.get_trace()   # list of StepTrace dicts
+)
+
+print(result.composite_score)  # e.g. 0.96
+print(result.passed)           # True`,
     lang: 'python',
   },
   smolagents: {
@@ -113,10 +123,21 @@ from regression_shield import evaluate_trace
 agent = CodeAgent(tools=[...], model=HfApiModel())
 agent.run(task)
 
-trace  = extract_smolagents_trace(agent)
-result = evaluate_trace(trace, policy={"required_tools": ["run_tests"]})
+# Normalise agent.logs into standard StepTrace format
+trace = extract_smolagents_trace(agent)
 
-print(result.passed)`,
+result = evaluate_trace(
+    scenario={
+        "scenario_id": "smol_gate",
+        "expected_tools":    ["run_tests"],
+        "expected_order":    ["run_tests"],
+        "optimal_step_count": 1,
+    },
+    trace=trace
+)
+
+print(result.passed)
+result.print_diagnostics()`,
     lang: 'python',
   },
   decorator: {
@@ -125,9 +146,11 @@ print(result.passed)`,
     snippet: `from regression_shield import shield
 
 @shield(
-    policy={
-        "forbidden_tool_pairs": [["access_credentials", "send_external_webhook"]],
-        "max_tool_calls": 5
+    scenario={
+        "scenario_id":    "pipeline_gate",
+        "expected_tools": ["run_unit_tests", "deploy_production"],
+        "expected_order": ["run_unit_tests", "deploy_production"],
+        "optimal_step_count": 2,
     },
     on_violation="raise"   # or "warn" / "log"
 )
@@ -156,9 +179,10 @@ jobs:
         run: |
           regshield check \\
             --trace    ./candidate_trace.json \\
+            --scenario ./scenario.json        \\
             --baseline ./baselines/approved.json \\
-            --policy   ./policy.yaml \\
-            --fail-on-regression`,
+            --fail-on-regression
+          # Exit 0 = PASSED  |  Exit 1 = REGRESSION BLOCKED`,
     lang: 'yaml',
   },
   rest: {
@@ -167,22 +191,26 @@ jobs:
     snippet: `# Start the local server (air-gapped, no cloud required)
 regshield serve --port 8000
 
-# Evaluate from any language
+# Evaluate from any language — send scenario + trace in one payload
 curl -X POST http://localhost:8000/api/evaluate-trace \\
   -H "Content-Type: application/json" \\
   -d '{
+    "scenario_id":        "auth_gate",
+    "expected_tools":     ["verify_auth", "fetch_data"],
+    "expected_order":     ["verify_auth", "fetch_data"],
+    "optimal_step_count": 2,
     "trace": [
       {
-        "thought": "Verifying auth before proceeding.",
-        "tool": "verify_auth",
-        "tool_input": {"uid": "usr_992"},
+        "thought":     "Verifying auth before proceeding.",
+        "action":      {"type": "tool_call", "name": "verify_auth", "args": {"uid": "usr_992"}},
         "observation": "AUTHORIZED"
+      },
+      {
+        "thought":     "Auth confirmed. Fetching user data.",
+        "action":      {"type": "tool_call", "name": "fetch_data", "args": {"uid": "usr_992"}},
+        "observation": "Data returned."
       }
-    ],
-    "policy": {
-      "required_tools": ["verify_auth"],
-      "max_tool_calls": 3
-    }
+    ]
   }'`,
     lang: 'bash',
   },

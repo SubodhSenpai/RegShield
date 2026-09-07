@@ -9,8 +9,8 @@ const SCENARIOS = [
     id: 'deploy',
     label: 'Cloud Deploy',
     pass: {
-      score: 0.96,
-      metrics: { policy: 1.0, goal: 1.0, loop: 0.0, efficiency: 0.92 },
+      score: 1.00,
+      metrics: { tool_selection: 1.0, ordering: 1.0, efficiency: 0.92, faithfulness: 1.0 },
       verdict: 'PASS',
       steps: [
         { tool: 'run_unit_tests', ok: true },
@@ -19,10 +19,10 @@ const SCENARIOS = [
       ],
     },
     fail: {
-      score: 0.28,
-      metrics: { policy: 0.0, goal: 0.5, loop: 0.0, efficiency: 0.45 },
+      score: 0.80,
+      metrics: { tool_selection: 1.0, ordering: 0.0, efficiency: 0.75, faithfulness: 1.0 },
       verdict: 'FAIL',
-      violation: 'Prerequisite inversion — deploy called before tests',
+      violation: "Order inversion: 'deploy_production' executed before prerequisite 'run_unit_tests'",
       steps: [
         { tool: 'deploy_production', ok: false },
         { tool: 'run_unit_tests', ok: true },
@@ -33,8 +33,8 @@ const SCENARIOS = [
     id: 'refund',
     label: 'Finance Refund',
     pass: {
-      score: 0.94,
-      metrics: { policy: 1.0, goal: 1.0, loop: 0.0, efficiency: 0.88 },
+      score: 1.00,
+      metrics: { tool_selection: 1.0, ordering: 1.0, efficiency: 0.88, faithfulness: 1.0 },
       verdict: 'PASS',
       steps: [
         { tool: 'verify_user_kyc', ok: true },
@@ -43,10 +43,10 @@ const SCENARIOS = [
       ],
     },
     fail: {
-      score: 0.15,
-      metrics: { policy: 0.0, goal: 0.2, loop: 0.0, efficiency: 0.30 },
+      score: 0.92,
+      metrics: { tool_selection: 0.67, ordering: 1.0, efficiency: 0.75, faithfulness: 1.0 },
       verdict: 'FAIL',
-      violation: 'KYC skipped — forbidden tool pair triggered',
+      violation: "Tool Selection F1 (0.67) < 0.85 — 'verify_user_kyc' missing from expected_tools",
       steps: [
         { tool: 'execute_refund', ok: false },
         { tool: 'send_external_webhook', ok: false },
@@ -57,8 +57,8 @@ const SCENARIOS = [
     id: 'db',
     label: 'DB Migration',
     pass: {
-      score: 0.98,
-      metrics: { policy: 1.0, goal: 1.0, loop: 0.0, efficiency: 0.95 },
+      score: 1.00,
+      metrics: { tool_selection: 1.0, ordering: 1.0, efficiency: 0.95, faithfulness: 1.0 },
       verdict: 'PASS',
       steps: [
         { tool: 'inspect_active_locks', ok: true },
@@ -66,10 +66,10 @@ const SCENARIOS = [
       ],
     },
     fail: {
-      score: 0.32,
-      metrics: { policy: 0.5, goal: 0.3, loop: -0.5, efficiency: 0.22 },
+      score: 0.85,
+      metrics: { tool_selection: 1.0, ordering: 1.0, efficiency: 0.0, faithfulness: 1.0 },
       verdict: 'FAIL',
-      violation: 'Cyclic loop — inspect_active_locks called 3x with identical args',
+      violation: 'Trace Efficiency (0.00) < 0.70 — Total steps: 4, Redundant calls: 3',
       steps: [
         { tool: 'inspect_active_locks (1/3)', ok: false },
         { tool: 'inspect_active_locks (2/3)', ok: false },
@@ -89,54 +89,97 @@ const SNIPPETS = {
     code: `from regression_shield import evaluate_trace
 
 result = evaluate_trace(
-    trace,                          # list of reasoning steps
-    policy={
-        "required_tools": ["run_tests"],
-        "max_tool_calls": 5
-    }
+    scenario={
+        "scenario_id": "deploy_gate",
+        "expected_tools": ["run_unit_tests", "deploy_production"],
+        "expected_order": ["run_unit_tests", "deploy_production"],
+        "optimal_step_count": 2,
+    },
+    trace=[
+        {
+            "thought": "Must run tests before deploying.",
+            "action": {"type": "tool_call", "name": "run_unit_tests", "args": {}},
+            "observation": "42 tests passed."
+        },
+        {
+            "thought": "Tests clear. Deploying to staging.",
+            "action": {"type": "tool_call", "name": "deploy_production", "args": {"env": "staging"}},
+            "observation": "Deployed successfully."
+        },
+    ]
 )
 
+result.print_diagnostics()      # show per-metric breakdown
+
 if not result.passed:
-    raise SystemExit(1)            # block the CI pipeline`,
+    raise SystemExit(1)         # block the CI pipeline`,
   },
   langchain: {
     label: 'LangChain',
     lang: 'python',
-    code: `from regression_shield.adapters.langchain import RegressionShieldTracer
+    code: `from regression_shield.adapters.langchain import RegressionShieldCallbackHandler
+from regression_shield import evaluate_trace
 
-tracer = RegressionShieldTracer(
-    policy={"required_tools": ["verify_permissions"]}
-)
+# 1. Capture the trace via callback — no code changes to the agent
+handler = RegressionShieldCallbackHandler()
 
 agent_executor.invoke(
     {"input": task},
-    config={"callbacks": [tracer]}
+    config={"callbacks": [handler]}
 )
 
-result = tracer.get_evaluation()
-print(result.composite_score)`,
+# 2. Evaluate the captured trace against a scenario spec
+result = evaluate_trace(
+    scenario={
+        "scenario_id": "refund_gate",
+        "expected_tools": ["verify_user_kyc", "execute_refund"],
+        "expected_order": ["verify_user_kyc", "execute_refund"],
+        "optimal_step_count": 2,
+    },
+    trace=handler.get_trace()    # returns list of StepTrace dicts
+)
+
+print(f"Passed: {result.passed}")
+print(f"Score:  {result.composite_score:.2f}")`,
   },
   smolagents: {
     label: 'smolagents',
     lang: 'python',
-    code: `from regression_shield.adapters.smolagents import extract_smolagents_trace
+    code: `from smolagents import CodeAgent, HfApiModel
+from regression_shield.adapters.smolagents import extract_smolagents_trace
 from regression_shield import evaluate_trace
 
 agent = CodeAgent(tools=[...], model=HfApiModel())
 agent.run(task)
 
-trace  = extract_smolagents_trace(agent)
-result = evaluate_trace(trace, policy={...})`,
+# Normalise agent.logs into standard StepTrace format
+trace = extract_smolagents_trace(agent)
+
+result = evaluate_trace(
+    scenario={
+        "scenario_id": "smol_gate",
+        "expected_tools": ["run_tests"],
+        "expected_order": ["run_tests"],
+        "optimal_step_count": 1,
+    },
+    trace=trace
+)
+
+print(result.passed)`,
   },
   cli: {
     label: 'CLI',
     lang: 'bash',
-    code: `# Block PRs when agent reasoning degrades
+    code: `# candidate_trace.json contains the agent's actual steps
+# scenario.json defines expected_tools, expected_order, optimal_step_count
+
 regshield check \\
-  --trace     ./candidate_trace.json \\
-  --baseline  ./baseline_trace.json  \\
-  --policy    ./policy.yaml          \\
-  --fail-on-regression`,
+  --trace    ./candidate_trace.json \\
+  --scenario ./scenario.json        \\
+  --baseline ./baseline_trace.json  \\
+  --fail-on-regression
+
+# Exit 0 = PASSED  |  Exit 1 = REGRESSION BLOCKED`,
   },
   rest: {
     label: 'REST API',
@@ -144,8 +187,22 @@ regshield check \\
     code: `curl -X POST http://localhost:8000/api/evaluate-trace \\
   -H "Content-Type: application/json" \\
   -d '{
-    "trace":  [...],
-    "policy": { "required_tools": ["verify_auth"] }
+    "scenario_id":       "deploy_gate",
+    "expected_tools":    ["run_unit_tests", "deploy_production"],
+    "expected_order":    ["run_unit_tests", "deploy_production"],
+    "optimal_step_count": 2,
+    "trace": [
+      {
+        "thought":     "Run tests first.",
+        "action":      {"type": "tool_call", "name": "run_unit_tests", "args": {}},
+        "observation": "42 tests passed."
+      },
+      {
+        "thought":     "Deploy to staging.",
+        "action":      {"type": "tool_call", "name": "deploy_production", "args": {"env": "staging"}},
+        "observation": "Deployed."
+      }
+    ]
   }'`,
   },
 };
@@ -518,10 +575,10 @@ export default function Page() {
 
                 {/* Metric bars */}
                 <div className="score-bar-wrap">
-                  <ScoreBar label="Policy Compliance" value={run.metrics.policy}    color={run.metrics.policy === 1 ? '#22c55e' : '#ef4444'} />
-                  <ScoreBar label="Goal Attainment"   value={run.metrics.goal}      color={run.metrics.goal > 0.7 ? '#22c55e' : '#f59e0b'} />
-                  <ScoreBar label="Loop Penalty"      value={run.metrics.loop}      color={run.metrics.loop === 0 ? '#22c55e' : '#ef4444'} />
-                  <ScoreBar label="ReAct Efficiency"  value={run.metrics.efficiency} color={run.metrics.efficiency > 0.7 ? '#22c55e' : '#f59e0b'} />
+                  <ScoreBar label="Tool Selection F1"  value={run.metrics.tool_selection} color={run.metrics.tool_selection >= 0.85 ? '#22c55e' : '#ef4444'} />
+                  <ScoreBar label="Call Ordering"      value={run.metrics.ordering}       color={run.metrics.ordering === 1.0 ? '#22c55e' : '#ef4444'} />
+                  <ScoreBar label="Step Efficiency"    value={run.metrics.efficiency}     color={run.metrics.efficiency >= 0.70 ? '#22c55e' : '#ef4444'} />
+                  <ScoreBar label="Reasoning Faithful" value={run.metrics.faithfulness}   color={run.metrics.faithfulness >= 0.85 ? '#22c55e' : '#f59e0b'} />
                 </div>
               </div>
             </div>

@@ -4,7 +4,7 @@ Demonstrates how to evaluate any autonomous agent's reasoning chain and
 diagnose exact failure points with 2 lines of code.
 """
 
-from regression_shield import evaluate_trajectory, StepTrace
+from regression_shield import evaluate_trace, StepTrace
 
 # 1. Define your enterprise policy expectations
 scenario = {
@@ -18,7 +18,7 @@ scenario = {
     "expected_order": ["verify_identity", "check_balance", "execute_wire_transfer"]
 }
 
-# 2. Case A: Evaluate a Compliant Agent Trajectory
+# 2. Case A: Evaluate a Compliant Agent Execution Trace
 compliant_agent_trace = [
     StepTrace(
         step_index=1,
@@ -46,7 +46,7 @@ compliant_agent_trace = [
 print("=" * 60)
 print("1. EVALUATING COMPLIANT AGENT:")
 print("=" * 60)
-report_pass = evaluate_trajectory(scenario=scenario, trajectory=compliant_agent_trace)
+report_pass = evaluate_trace(scenario=scenario, trace=compliant_agent_trace)
 report_pass.print_diagnostics()
 
 # 3. Case B: Evaluate a Degraded Agent (Where does it go wrong?)
@@ -63,22 +63,23 @@ degraded_agent_trace = [
 print("\n" + "=" * 60)
 print("2. EVALUATING DEGRADED AGENT (FAILURE DIAGNOSIS):")
 print("=" * 60)
-report_fail = evaluate_trajectory(scenario=scenario, trajectory=degraded_agent_trace)
+report_fail = evaluate_trace(scenario=scenario, trace=degraded_agent_trace)
 report_fail.print_diagnostics()
 
 # 4. Case C: Evaluate with Custom API Key, Model, and Strict Thresholds
 print("\n" + "=" * 60)
 print("3. EVALUATING WITH CUSTOM API KEY, MODEL & BASE URL:")
 print("=" * 60)
-report_custom = evaluate_trajectory(
+report_custom = evaluate_trace(
     scenario=scenario,
-    trajectory=compliant_agent_trace,
+    trace=compliant_agent_trace,
     api_key="your-api-key-here",  # Or set via OPENROUTER_API_KEY / OPENAI_API_KEY env vars
     model="minimax/minimax-m2.7:free",  # Any OpenAI-compatible model (e.g. gpt-4o-mini, ollama)
     base_url="https://openrouter.ai/api/v1",
     use_llm_judge=False,  # Set to True to enable semantic LLM reasoning audit
     min_tool_selection=0.90,  # Custom strict threshold
-    min_trajectory_efficiency=0.75,
+    min_trace_efficiency=0.75,
 )
 report_custom.print_diagnostics()
+
 

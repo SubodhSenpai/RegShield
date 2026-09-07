@@ -187,21 +187,21 @@ class ToolCallOrderMetric:
 
 
 class StepEfficiencyMetric:
-    """Measures trajectory efficiency and detects execution loops, redundant
+    """Measures execution trace efficiency and detects execution loops, redundant
     duplicate queries, and excessive exploration steps.
     """
 
     @staticmethod
-    def evaluate(trajectory: List[Dict[str, Any]], optimal_steps: int = 3) -> Dict[str, Any]:
+    def evaluate(trace: List[Dict[str, Any]], optimal_steps: int = 3) -> Dict[str, Any]:
         """Compute efficiency score based on duplicate signatures and step inflation."""
-        total_steps = len(trajectory)
+        total_steps = len(trace)
         if total_steps == 0:
             return {"score": 1.0, "redundant_calls": 0, "loop_detected": False}
 
         seen_tool_calls: Set[str] = set()
         redundant_count = 0
 
-        for step in trajectory:
+        for step in trace:
             action = step.get("action", {})
             if action.get("type", "tool_call") == "tool_call":
                 sig = f"{action.get('name')}:{json.dumps(action.get('args', {}), sort_keys=True)}"
@@ -224,13 +224,13 @@ class StepEfficiencyMetric:
 
 class ReasoningFaithfulnessMetric:
     """Evaluates whether intermediate reasoning thoughts are grounded in
-    the tool observations or whether the agent hallucinates state changes.
+    prior tool observations or whether the agent hallucinates state changes.
     """
 
     @staticmethod
-    def evaluate(trajectory: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def evaluate(trace: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Check thought alignment against prior observations."""
-        if not trajectory:
+        if not trace:
             return {"score": 1.0, "anomalies": []}
 
         anomalies = []
@@ -238,7 +238,7 @@ class ReasoningFaithfulnessMetric:
         grounded_thoughts = 0
 
         prev_obs_str = ""
-        for step in trajectory:
+        for step in trace:
             thought = step.get("thought", "").strip()
             obs = str(step.get("observation", "")).strip()
 
@@ -267,9 +267,9 @@ class ReasoningFaithfulnessMetric:
         }
 
 
-class CompositeTrajectoryScore:
+class CompositeTraceScore:
     """Aggregates tool selection, argument accuracy, ordering, efficiency,
-    and reasoning into a unified trajectory evaluation score.
+    and reasoning into a unified execution trace evaluation score.
     """
 
     WEIGHTS = {
@@ -287,3 +287,8 @@ class CompositeTrajectoryScore:
             for metric_key, weight in cls.WEIGHTS.items()
         )
         return round(composite, 2)
+
+
+# Backward compatibility alias
+CompositeTrajectoryScore = CompositeTraceScore
+

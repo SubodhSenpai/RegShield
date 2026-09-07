@@ -1,4 +1,4 @@
-"""Core Trajectory Evaluation Orchestrator for RegressionShield SDK."""
+"""Core Execution Trace Evaluation Orchestrator for RegressionShield SDK."""
 
 import logging
 from typing import Dict, Any, List, Union, Optional
@@ -9,6 +9,7 @@ from regression_shield.core.agent_metrics import (
     ToolCallOrderMetric,
     StepEfficiencyMetric,
     ReasoningFaithfulnessMetric,
+    CompositeTraceScore,
     CompositeTrajectoryScore,
 )
 from regression_shield.core.llm_judge import LLMJudge
@@ -17,8 +18,8 @@ from regression_shield.models import ScenarioSpec, StepTrace, EvaluationReport
 logger = logging.getLogger("regression_shield.evaluator")
 
 
-class AgentTrajectoryEvaluator:
-    """Core evaluation orchestrator assessing ReAct agent trajectories."""
+class AgentTraceEvaluator:
+    """Core evaluation orchestrator assessing ReAct agent execution traces."""
 
     def __init__(
         self,
@@ -29,7 +30,8 @@ class AgentTrajectoryEvaluator:
         min_tool_selection: float = 0.85,
         min_argument_correctness: float = 0.85,
         min_order_accuracy: float = 1.00,
-        min_trajectory_efficiency: float = 0.70,
+        min_trace_efficiency: float = 0.70,
+        **kwargs: Any,
     ):
         self.api_key = api_key
         self.model = model
@@ -38,22 +40,31 @@ class AgentTrajectoryEvaluator:
         self.min_tool_selection = min_tool_selection
         self.min_argument_correctness = min_argument_correctness
         self.min_order_accuracy = min_order_accuracy
-        self.min_trajectory_efficiency = min_trajectory_efficiency
+        self.min_trace_efficiency = kwargs.get("min_trajectory_efficiency", min_trace_efficiency)
+
+    @property
+    def min_trajectory_efficiency(self) -> float:
+        return self.min_trace_efficiency
+
+    @min_trajectory_efficiency.setter
+    def min_trajectory_efficiency(self, val: float):
+        self.min_trace_efficiency = val
 
     def evaluate_scenario(
         self,
         scenario: Union[ScenarioSpec, Dict[str, Any]],
-        trajectory_data: Union[List[Union[StepTrace, Dict[str, Any]]], Dict[str, Any]],
+        trace_data: Optional[Union[List[Union[StepTrace, Dict[str, Any]]], Dict[str, Any]]] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         base_url: Optional[str] = None,
         use_llm_judge: Optional[bool] = None,
+        **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Evaluate an agent trajectory against a scenario policy specification.
+        """Evaluate an agent execution trace against a scenario policy specification.
 
         Args:
             scenario: Scenario dict or ScenarioSpec.
-            trajectory_data: List of steps or dict with 'steps' and 'final_response'.
+            trace_data: List of steps or dict with 'steps' and 'final_response'.
             api_key: Optional API key for LLM-as-a-judge verification.
             model: Optional model name (e.g. minimax/minimax-m2.7:free, gpt-4o-mini).
             base_url: Optional OpenAI-compatible base URL.
@@ -62,6 +73,10 @@ class AgentTrajectoryEvaluator:
         Returns:
             Dict report with status, composite_score, metrics, judge_audit, and failures.
         """
+        raw_input = trace_data if trace_data is not None else kwargs.get("trajectory_data")
+        if raw_input is None:
+            raw_input = []
+
         # Normalize scenario
         if isinstance(scenario, ScenarioSpec):
             sc_dict = scenario.to_dict()
@@ -76,13 +91,13 @@ class AgentTrajectoryEvaluator:
         expected_arguments = sc_dict.get("expected_arguments", {})
         expected_order = sc_dict.get("expected_order", [])
 
-        # Normalize trajectory
-        if isinstance(trajectory_data, list):
-            raw_steps = trajectory_data
+        # Normalize trace
+        if isinstance(raw_input, list):
+            raw_steps = raw_input
             final_response = ""
         else:
-            raw_steps = trajectory_data.get("steps", [])
-            final_response = trajectory_data.get("final_response", "")
+            raw_steps = raw_input.get("steps", [])
+            final_response = raw_input.get("final_response", "")
 
         # Convert StepTrace objects to dicts if needed
         steps: List[Dict[str, Any]] = []
@@ -123,7 +138,7 @@ class AgentTrajectoryEvaluator:
             "step_efficiency": efficiency_res["score"],
             "reasoning_faithfulness": reasoning_res["score"],
         }
-        composite_score = CompositeTrajectoryScore.calculate(metric_scores)
+        composite_score = CompositeTraceScore.calculate(metric_scores)
 
         # Diagnostics & failure detection
         failures = []
@@ -146,9 +161,9 @@ class AgentTrajectoryEvaluator:
                 f"Violations: {'; '.join(order_res['violations'])}"
             )
 
-        if efficiency_res["score"] < self.min_trajectory_efficiency:
+        if efficiency_res["score"] < self.min_trace_efficiency:
             failures.append(
-                f"Trajectory Efficiency ({efficiency_res['score']:.2f}) < threshold ({self.min_trajectory_efficiency:.2f}). "
+                f"Trace Efficiency ({efficiency_res['score']:.2f}) < threshold ({self.min_trace_efficiency:.2f}). "
                 f"Total steps: {efficiency_res['total_steps']}, Redundant calls: {efficiency_res['redundant_calls']}"
             )
 
@@ -206,3 +221,8 @@ class AgentTrajectoryEvaluator:
         }
 
         return report
+
+
+# Backward compatibility alias
+AgentTrajectoryEvaluator = AgentTraceEvaluator
+

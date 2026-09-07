@@ -2,7 +2,10 @@
 
 import pytest
 from regression_shield import (
+    evaluate_trace,
     evaluate_trajectory,
+    AgentTraceEvaluator,
+    AgentTrajectoryEvaluator,
     ScenarioSpec,
     StepTrace,
     EvaluationReport,
@@ -59,6 +62,29 @@ class TestSDKTopLevelInterface:
         assert report.metrics["argument_correctness"] == 1.0
         assert report.metrics["call_ordering"] == 1.0
         assert len(report.failures) == 0
+
+    def test_evaluate_trace_primary_interface(self):
+        scenario = {
+            "scenario_id": "SDK_TRACE_01",
+            "title": "Evaluate Trace Primary API",
+            "expected_tools": ["search"],
+        }
+        steps = [
+            StepTrace(
+                step_index=1,
+                thought="Searching records.",
+                action_name="search",
+                action_args={"q": "invoice"},
+                observation="RECORD_FOUND",
+            )
+        ]
+
+        report = evaluate_trace(scenario=scenario, trace=steps)
+        assert isinstance(report, EvaluationReport)
+        assert report.passed is True
+        assert report.composite_score == 1.0
+        assert report.metrics["tool_selection"] == 1.0
+
 
     def test_evaluate_trajectory_diagnoses_failures(self):
         scenario = ScenarioSpec(

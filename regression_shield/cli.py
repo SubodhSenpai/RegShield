@@ -45,7 +45,7 @@ def run_eval_from_file(file_path: str):
 
 def start_server_command(port: int = 8000):
     """Start the dynamic dashboard server."""
-    from server import start_server
+    from regression_shield.server import start_server
     start_server(port=port)
 
 
@@ -65,8 +65,8 @@ def main():
     serve_parser.add_argument("--port", "-p", type=int, default=8000, help="Port to listen on (default: 8000)")
 
     # Command: demo
-    demo_parser = subparsers.add_parser("demo", help="Run the built-in live baseline vs. regression demo")
-    demo_parser.add_argument("--opensource", action="store_true", help="Include Hugging Face smolagents audit")
+    demo_parser = subparsers.add_parser("demo", help="Run evaluation on sample scenarios")
+    demo_parser.add_argument("--file", default=None, help="Optional scenarios file path")
 
     args = parser.parse_args()
 
@@ -75,8 +75,10 @@ def main():
     elif args.command == "serve":
         start_server_command(port=args.port)
     elif args.command == "demo":
-        from demo_runner import main as demo_main
-        demo_main()
+        sample_path = args.file or os.path.join(os.path.dirname(__file__), "..", "examples", "sample_scenarios.json")
+        if not os.path.exists(sample_path):
+            sample_path = os.path.join(os.path.dirname(__file__), "..", "data", "agent_trajectories.json")
+        run_eval_from_file(sample_path)
     else:
         parser.print_help()
 

@@ -1,5 +1,5 @@
 import pytest
-from core.agent_metrics import (
+from regression_shield.core.agent_metrics import (
     ToolSelectionMetric,
     ArgumentCorrectnessMetric,
     ToolCallOrderMetric,
@@ -7,7 +7,7 @@ from core.agent_metrics import (
     ReasoningFaithfulnessMetric,
     CompositeTrajectoryScore,
 )
-from core.trajectory_evaluator import AgentTrajectoryEvaluator
+from regression_shield.core.trajectory_evaluator import AgentTrajectoryEvaluator
 
 
 class TestToolSelectionMetric:

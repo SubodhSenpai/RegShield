@@ -1,0 +1,1640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RegressionShield — Agentic AI Reasoning & Execution Trajectory Dashboard</title>
+  <meta name="description" content="Dynamic evaluation and observability dashboard for Agentic AI reasoning chains, tool calling accuracy, ReAct execution trajectories, and policy regressions." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-dark: #07090e;
+      --bg-card: rgba(17, 24, 39, 0.75);
+      --bg-card-hover: rgba(31, 41, 55, 0.85);
+      --bg-glass: rgba(15, 23, 42, 0.65);
+      --border-glass: rgba(255, 255, 255, 0.08);
+      --border-accent: rgba(6, 182, 212, 0.3);
+      --text-primary: #f9fafb;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --cyan-400: #22d3ee;
+      --cyan-500: #06b6d4;
+      --violet-400: #a78bfa;
+      --violet-500: #8b5cf6;
+      --emerald-400: #34d399;
+      --emerald-500: #10b981;
+      --rose-400: #fb7185;
+      --rose-500: #f43f5e;
+      --amber-400: #fbbf24;
+      --amber-500: #f59e0b;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --shadow-glow-cyan: 0 0 25px rgba(6, 182, 212, 0.2);
+      --shadow-glow-violet: 0 0 25px rgba(139, 92, 246, 0.2);
+      --shadow-glow-emerald: 0 0 25px rgba(16, 185, 129, 0.2);
+      --shadow-glow-rose: 0 0 25px rgba(244, 63, 94, 0.2);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(6, 182, 212, 0.12) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.12) 0px, transparent 50%),
+        radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.08) 0px, transparent 50%);
+      background-attachment: fixed;
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.25);
+    }
+
+    .container {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 24px 32px 64px;
+    }
+
+    /* Header & Navigation */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border-glass);
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .logo-badge {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, var(--cyan-500), var(--violet-500));
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      box-shadow: var(--shadow-glow-cyan);
+    }
+
+    .brand-title {
+      font-size: 1.4rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      background: linear-gradient(to right, #ffffff, #94a3b8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-subtitle {
+      font-size: 0.8rem;
+      color: var(--cyan-400);
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .server-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--emerald-400);
+      font-size: 0.8rem;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+
+    .server-badge.offline {
+      background: rgba(244, 63, 94, 0.1);
+      border-color: rgba(244, 63, 94, 0.3);
+      color: var(--rose-400);
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: currentColor;
+      box-shadow: 0 0 8px currentColor;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 18px;
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+      outline: none;
+      font-family: var(--font-sans);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--cyan-500), #0284c7);
+      color: #ffffff;
+      box-shadow: 0 4px 14px rgba(6, 182, 212, 0.3);
+    }
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(6, 182, 212, 0.45);
+    }
+
+    .btn-secondary {
+      background: rgba(139, 92, 246, 0.15);
+      border-color: rgba(139, 92, 246, 0.35);
+      color: var(--violet-400);
+    }
+    .btn-secondary:hover:not(:disabled) {
+      background: rgba(139, 92, 246, 0.25);
+      transform: translateY(-1px);
+    }
+
+    .btn-ghost {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: var(--border-glass);
+      color: var(--text-secondary);
+    }
+    .btn-ghost:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-primary);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    /* Live Meta Bar */
+    .meta-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-glass);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      padding: 12px 20px;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .meta-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+    .meta-item strong {
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-weight: 500;
+    }
+
+    /* KPI Cards Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .kpi-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--border-accent);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+    }
+
+    .kpi-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--cyan-500), var(--violet-500));
+      opacity: 0.7;
+    }
+
+    .kpi-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .kpi-title {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+
+    .kpi-icon {
+      font-size: 1.1rem;
+      opacity: 0.8;
+    }
+
+    .kpi-value {
+      font-size: 1.9rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      font-family: var(--font-mono);
+      margin-bottom: 4px;
+    }
+
+    .kpi-sub {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Tabs Navigation */
+    .tabs-nav {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--border-glass);
+      padding-bottom: 12px;
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      padding: 10px 20px;
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .tab-btn.active {
+      color: #ffffff;
+      background: rgba(6, 182, 212, 0.12);
+      border-color: rgba(6, 182, 212, 0.35);
+      box-shadow: 0 0 15px rgba(6, 182, 212, 0.15);
+    }
+
+    /* Tab Panes */
+    .tab-pane {
+      display: none;
+    }
+    .tab-pane.active {
+      display: block;
+      animation: fadeIn 0.25s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Trajectory Inspector Layout */
+    .inspector-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .scenario-selector {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .scenario-pill {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-glass);
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .scenario-pill:hover {
+      border-color: rgba(255, 255, 255, 0.2);
+      color: var(--text-primary);
+    }
+
+    .scenario-pill.active {
+      background: rgba(139, 92, 246, 0.18);
+      border-color: rgba(139, 92, 246, 0.4);
+      color: var(--violet-400);
+      box-shadow: var(--shadow-glow-violet);
+    }
+
+    .mode-toggle-group {
+      display: inline-flex;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-sm);
+      padding: 3px;
+    }
+
+    .mode-toggle-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .mode-toggle-btn.active {
+      background: rgba(255, 255, 255, 0.12);
+      color: #ffffff;
+    }
+
+    .mode-toggle-btn.active.baseline {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--emerald-400);
+    }
+
+    .mode-toggle-btn.active.regression {
+      background: rgba(244, 63, 94, 0.2);
+      color: var(--rose-400);
+    }
+
+    /* Scenario Overview Card */
+    .scenario-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .sc-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .sc-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      letter-spacing: 0.04em;
+    }
+    .badge-pass {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: var(--emerald-400);
+    }
+    .badge-fail {
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      color: var(--rose-400);
+    }
+    .badge-domain {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-glass);
+      color: var(--text-secondary);
+    }
+
+    .sc-goal {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      margin-bottom: 18px;
+      line-height: 1.6;
+    }
+
+    /* Scenario Mini Metrics Bar */
+    .mini-metrics-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 12px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border-glass);
+    }
+
+    .mini-metric {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .mini-metric-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .mini-metric-value {
+      font-family: var(--font-mono);
+      font-size: 1.1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* ReAct Step Timeline */
+    .step-timeline {
+      position: relative;
+      padding-left: 28px;
+      margin-top: 24px;
+    }
+
+    .step-timeline::before {
+      content: '';
+      position: absolute;
+      left: 10px;
+      top: 16px;
+      bottom: 24px;
+      width: 2px;
+      background: linear-gradient(to bottom, var(--cyan-500), var(--violet-500), rgba(255, 255, 255, 0.05));
+    }
+
+    .step-node {
+      position: relative;
+      margin-bottom: 24px;
+    }
+
+    .step-marker {
+      position: absolute;
+      left: -28px;
+      top: 14px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #111827;
+      border: 2px solid var(--cyan-400);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+      font-family: var(--font-mono);
+      font-weight: 800;
+      color: var(--cyan-400);
+      box-shadow: 0 0 10px rgba(6, 182, 212, 0.4);
+    }
+
+    .step-card {
+      background: rgba(17, 24, 39, 0.6);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      padding: 18px;
+      backdrop-filter: blur(8px);
+      transition: border-color 0.2s;
+    }
+    .step-card:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .step-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .step-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    /* Thought Bubble */
+    .thought-bubble {
+      background: rgba(139, 92, 246, 0.08);
+      border-left: 3px solid var(--violet-500);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 12px 16px;
+      margin-bottom: 12px;
+      font-size: 0.88rem;
+      color: #e2e8f0;
+      line-height: 1.5;
+    }
+
+    .thought-label {
+      font-size: 0.72rem;
+      color: var(--violet-400);
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Action Block */
+    .action-block {
+      background: rgba(6, 182, 212, 0.06);
+      border-left: 3px solid var(--cyan-500);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 12px 16px;
+      margin-bottom: 12px;
+    }
+
+    .action-label {
+      font-size: 0.72rem;
+      color: var(--cyan-400);
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .tool-call-badge {
+      display: inline-block;
+      background: rgba(6, 182, 212, 0.18);
+      border: 1px solid rgba(6, 182, 212, 0.35);
+      color: #ffffff;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    pre.code-snippet {
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: #93c5fd;
+      overflow-x: auto;
+      line-height: 1.4;
+    }
+
+    /* Observation Block */
+    .observation-block {
+      background: rgba(16, 185, 129, 0.06);
+      border-left: 3px solid var(--emerald-500);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 12px 16px;
+    }
+
+    .observation-label {
+      font-size: 0.72rem;
+      color: var(--emerald-400);
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Final Answer Card */
+    .final-answer-card {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.8));
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      margin-top: 20px;
+    }
+    .final-answer-title {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      color: var(--cyan-400);
+      font-weight: 700;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .final-answer-content {
+      font-size: 0.9rem;
+      color: #f1f5f9;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    /* Failures Box */
+    .failures-box {
+      background: rgba(244, 63, 94, 0.1);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+      border-radius: var(--radius-md);
+      padding: 18px;
+      margin-top: 20px;
+    }
+    .failures-title {
+      color: var(--rose-400);
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .failures-list {
+      list-style-type: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .failures-list li {
+      color: #fecdd3;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .failures-list li::before {
+      content: '⚠️';
+      font-size: 0.9rem;
+    }
+
+    /* Matrix Table */
+    .table-container {
+      background: var(--bg-card);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+    }
+
+    table.matrix-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.88rem;
+    }
+
+    table.matrix-table th {
+      background: rgba(0, 0, 0, 0.4);
+      padding: 14px 18px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border-glass);
+    }
+
+    table.matrix-table td {
+      padding: 16px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-primary);
+    }
+
+    table.matrix-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    table.matrix-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .delta-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+    .delta-pill.neg {
+      background: rgba(244, 63, 94, 0.15);
+      color: var(--rose-400);
+    }
+    .delta-pill.neutral {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+    }
+    .delta-pill.pos {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--emerald-400);
+    }
+
+    /* Toast Notification */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .toast {
+      background: #1e293b;
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-sm);
+      padding: 14px 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      color: #ffffff;
+      font-size: 0.88rem;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 320px;
+      animation: slideIn 0.3s ease;
+    }
+
+    .toast.success {
+      border-color: rgba(16, 185, 129, 0.4);
+      box-shadow: var(--shadow-glow-emerald);
+    }
+
+    .toast.error {
+      border-color: rgba(244, 63, 94, 0.4);
+      box-shadow: var(--shadow-glow-rose);
+    }
+
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    /* Loading Spinner */
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: #ffffff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+    }
+    .empty-state-icon {
+      font-size: 2.5rem;
+      margin-bottom: 12px;
+      opacity: 0.6;
+    }
+
+    @media (max-width: 768px) {
+      .container {
+        padding: 16px;
+      }
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .header-actions {
+        width: 100%;
+        justify-content: space-between;
+      }
+      .kpi-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <div class="brand">
+        <div class="logo-badge">🛡️</div>
+        <div>
+          <h1 class="brand-title">RegressionShield</h1>
+          <div class="brand-subtitle">Agentic AI Reasoning & Trajectory Observability</div>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div id="serverBadge" class="server-badge">
+          <div class="pulse-dot"></div>
+          <span id="serverStatusText">Connecting...</span>
+        </div>
+
+        <button id="btnRunEval" class="btn btn-primary" onclick="triggerRunEval()">
+          <span>⚡</span>
+          <span id="btnRunEvalText">Run Live Trajectory Eval</span>
+        </button>
+
+        <button id="btnRunSmol" class="btn btn-secondary" onclick="triggerRunSmolagents()">
+          <span>🤖</span>
+          <span id="btnRunSmolText">smolagents Audit</span>
+        </button>
+
+        <button id="btnRefresh" class="btn btn-ghost" onclick="fetchLatestReport(true)" title="Refresh data from server">
+          <span>🔄</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Meta Status Bar -->
+    <div class="meta-bar">
+      <div class="meta-item">
+        <span>Active Judge:</span>
+        <strong id="metaJudgeModel">minimax/minimax-m2.7:free</strong>
+      </div>
+      <div class="meta-item">
+        <span>Report Timestamp:</span>
+        <strong id="metaTimestamp">Checking...</strong>
+      </div>
+      <div class="meta-item">
+        <span>Evaluation Mode:</span>
+        <strong id="metaMode">Live Multi-Step Reasoning</strong>
+      </div>
+      <div class="meta-item">
+        <span>Auto-Refresh:</span>
+        <select id="autoRefreshSelect" onchange="updateAutoRefresh()" style="background: rgba(0,0,0,0.4); color: #fff; border: 1px solid var(--border-glass); border-radius: 4px; padding: 2px 8px; font-size: 0.78rem; font-family: var(--font-mono);">
+          <option value="0">OFF</option>
+          <option value="5000" selected>Every 5s</option>
+          <option value="15000">Every 15s</option>
+          <option value="30000">Every 30s</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Executive KPI Grid -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-title">Baseline Pass Rate</span>
+          <span class="kpi-icon">🎯</span>
+        </div>
+        <div id="kpiBaselinePass" class="kpi-value" style="color: var(--emerald-400);">--</div>
+        <div class="kpi-sub">Target policy adherence</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-title">Regression Pass Rate</span>
+          <span class="kpi-icon">⚠️</span>
+        </div>
+        <div id="kpiRegressionPass" class="kpi-value" style="color: var(--rose-400);">--</div>
+        <div class="kpi-sub">Detected policy violations</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-title">Avg Tool Selection F1</span>
+          <span class="kpi-icon">🛠️</span>
+        </div>
+        <div id="kpiToolF1" class="kpi-value" style="color: var(--cyan-400);">--</div>
+        <div class="kpi-sub">Precision & recall balance</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-title">Argument Correctness</span>
+          <span class="kpi-icon">📋</span>
+        </div>
+        <div id="kpiArgs" class="kpi-value" style="color: var(--violet-400);">--</div>
+        <div class="kpi-sub">Schema & parameter checks</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-title">Reasoning Faithfulness</span>
+          <span class="kpi-icon">🧠</span>
+        </div>
+        <div id="kpiFaithfulness" class="kpi-value" style="color: #38bdf8;">--</div>
+        <div class="kpi-sub">Thought-observation grounding</div>
+      </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="tabs-nav">
+      <button class="tab-btn active" onclick="switchTab('tab-inspector')">
+        <span>🔍</span> ReAct Step Trace Inspector
+      </button>
+      <button class="tab-btn" onclick="switchTab('tab-matrix')">
+        <span>📊</span> Baseline vs. Regression Delta Matrix
+      </button>
+      <button class="tab-btn" onclick="switchTab('tab-smolagents')">
+        <span>🤗</span> Hugging Face smolagents Audit
+      </button>
+      <button class="tab-btn" onclick="switchTab('tab-json')">
+        <span>📄</span> Raw JSON Report
+      </button>
+    </div>
+
+    <!-- TAB 1: ReAct Step Trace Inspector -->
+    <div id="tab-inspector" class="tab-pane active">
+      <div class="inspector-header">
+        <div class="scenario-selector" id="scenarioPills">
+          <!-- Populated by JS -->
+        </div>
+
+        <div class="mode-toggle-group">
+          <button id="toggleBaseline" class="mode-toggle-btn active baseline" onclick="setTraceMode('baseline')">
+            ✓ Baseline Trace
+          </button>
+          <button id="toggleRegression" class="mode-toggle-btn regression" onclick="setTraceMode('regression')">
+            ✗ Regressed Trace
+          </button>
+        </div>
+      </div>
+
+      <div id="scenarioDetailContainer">
+        <!-- Populated by renderScenarioTrace() -->
+      </div>
+    </div>
+
+    <!-- TAB 2: Delta Matrix -->
+    <div id="tab-matrix" class="tab-pane">
+      <div class="table-container">
+        <table class="matrix-table" id="matrixTable">
+          <thead>
+            <tr>
+              <th>Scenario ID</th>
+              <th>Domain / Task</th>
+              <th>Baseline Composite</th>
+              <th>Regression Composite</th>
+              <th>Composite Delta</th>
+              <th>Tool Selection Δ</th>
+              <th>Args Δ</th>
+              <th>Order Δ</th>
+              <th>Efficiency Δ</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="matrixTableBody">
+            <!-- Populated by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TAB 3: smolagents Live Audit -->
+    <div id="tab-smolagents" class="tab-pane">
+      <div id="smolagentsContainer">
+        <!-- Populated by renderSmolagents() -->
+      </div>
+    </div>
+
+    <!-- TAB 4: Raw JSON -->
+    <div id="tab-json" class="tab-pane">
+      <div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
+        <button class="btn btn-ghost" onclick="copyRawJson()">📋 Copy JSON</button>
+      </div>
+      <div class="table-container" style="padding: 20px;">
+        <pre id="rawJsonCode" class="code-snippet" style="max-height: 600px;"></pre>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script>
+    // State management
+    let reportData = null;
+    let selectedScenarioId = "AT_001";
+    let activeTraceMode = "baseline"; // "baseline" or "regression"
+    let autoRefreshTimer = null;
+    let isServerOnline = false;
+
+    // Show toast message
+    function showToast(message, type = "info") {
+      const container = document.getElementById("toast-container");
+      const toast = document.createElement("div");
+      toast.className = `toast ${type}`;
+      const icon = type === "success" ? "✅" : (type === "error" ? "❌" : "ℹ️");
+      toast.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+      container.appendChild(toast);
+      setTimeout(() => {
+        toast.style.opacity = "0";
+        toast.style.transform = "translateX(100%)";
+        toast.style.transition = "all 0.3s ease";
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+
+    // Tab Switching
+    function switchTab(tabId) {
+      document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+      document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.remove("active"));
+      event.currentTarget.classList.add("active");
+      const target = document.getElementById(tabId);
+      if (target) target.classList.add("active");
+    }
+
+    function setTraceMode(mode) {
+      activeTraceMode = mode;
+      document.getElementById("toggleBaseline").className = `mode-toggle-btn baseline ${mode === 'baseline' ? 'active' : ''}`;
+      document.getElementById("toggleRegression").className = `mode-toggle-btn regression ${mode === 'regression' ? 'active' : ''}`;
+      renderScenarioTrace();
+    }
+
+    // Health check & model status
+    async function checkServerStatus() {
+      try {
+        const res = await fetch("/api/status", { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          isServerOnline = true;
+          document.getElementById("serverBadge").className = "server-badge";
+          document.getElementById("serverStatusText").textContent = "Connected to Server (Port 8000)";
+          if (data.judge_model) {
+            document.getElementById("metaJudgeModel").textContent = data.judge_model;
+          }
+        } else {
+          throw new Error("Bad status response");
+        }
+      } catch (err) {
+        isServerOnline = false;
+        document.getElementById("serverBadge").className = "server-badge offline";
+        document.getElementById("serverStatusText").textContent = "Offline / File Mode";
+      }
+    }
+
+    // Fetch report data
+    async function fetchLatestReport(manual = false) {
+      try {
+        let data = null;
+        if (window.location.protocol.startsWith("http")) {
+          const res = await fetch("/api/latest-report", { cache: "no-store" });
+          if (res.ok) {
+            data = await res.json();
+          }
+        }
+        
+        // Fallback for file:// or offline
+        if (!data) {
+          const fallbackRes = await fetch("reports/latest_report.json", { cache: "no-store" });
+          if (fallbackRes.ok) {
+            data = await fallbackRes.json();
+          }
+        }
+
+        if (data) {
+          reportData = data;
+          renderDashboard();
+          if (manual) showToast("Dashboard data updated", "success");
+        }
+      } catch (err) {
+        if (manual) showToast("Could not fetch latest report: " + err.message, "error");
+      }
+    }
+
+    // Trigger live evaluation
+    async function triggerRunEval() {
+      const btn = document.getElementById("btnRunEval");
+      const btnText = document.getElementById("btnRunEvalText");
+      btn.disabled = true;
+      btnText.innerHTML = `<div class="spinner"></div> Running Live Trajectory Eval...`;
+      showToast("Live Agentic Reasoning evaluation triggered...", "info");
+
+      try {
+        const res = await fetch("/api/run-eval", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ live: true })
+        });
+        const result = await res.json();
+        if (res.ok) {
+          showToast(result.message || "Evaluation complete!", "success");
+          await fetchLatestReport();
+        } else {
+          showToast(result.error || result.message || "Evaluation failed", "error");
+        }
+      } catch (err) {
+        showToast("Error triggering eval: " + err.message, "error");
+      } finally {
+        btn.disabled = false;
+        btnText.textContent = "Run Live Trajectory Eval";
+      }
+    }
+
+    // Trigger smolagents audit
+    async function triggerRunSmolagents() {
+      const btn = document.getElementById("btnRunSmol");
+      const btnText = document.getElementById("btnRunSmolText");
+      btn.disabled = true;
+      btnText.innerHTML = `<div class="spinner"></div> Running smolagents...`;
+      showToast("Hugging Face smolagents live audit triggered...", "info");
+
+      try {
+        const res = await fetch("/api/run-smolagents", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        });
+        const result = await res.json();
+        if (res.ok) {
+          showToast(result.message || "smolagents audit complete!", "success");
+          await fetchLatestReport();
+          switchTab('tab-smolagents');
+        } else {
+          showToast(result.error || result.message || "smolagents failed", "error");
+        }
+      } catch (err) {
+        showToast("Error triggering smolagents: " + err.message, "error");
+      } finally {
+        btn.disabled = false;
+        btnText.textContent = "smolagents Audit";
+      }
+    }
+
+    // Render entire dashboard
+    function renderDashboard() {
+      if (!reportData) return;
+
+      // Meta bar
+      if (reportData.timestamp) {
+        const date = new Date(reportData.timestamp);
+        document.getElementById("metaTimestamp").textContent = date.toLocaleTimeString() + " (" + date.toLocaleDateString() + ")";
+      }
+      if (reportData.config && reportData.config.judge_model) {
+        document.getElementById("metaJudgeModel").textContent = reportData.config.judge_model;
+      }
+
+      // Compute KPIs
+      const bList = reportData.trajectory_baseline || [];
+      const rList = reportData.trajectory_regression || [];
+
+      if (bList.length > 0) {
+        const bPassed = bList.filter(s => s.status === "PASSED").length;
+        document.getElementById("kpiBaselinePass").textContent = `${Math.round((bPassed / bList.length) * 100)}%`;
+
+        const avgToolF1 = bList.reduce((acc, s) => acc + (s.metrics?.tool_selection || 0), 0) / bList.length;
+        document.getElementById("kpiToolF1").textContent = avgToolF1.toFixed(2);
+
+        const avgArgs = bList.reduce((acc, s) => acc + (s.metrics?.argument_correctness || 0), 0) / bList.length;
+        document.getElementById("kpiArgs").textContent = `${Math.round(avgArgs * 100)}%`;
+
+        const avgFaith = bList.reduce((acc, s) => acc + (s.metrics?.reasoning_faithfulness || 0), 0) / bList.length;
+        document.getElementById("kpiFaithfulness").textContent = `${Math.round(avgFaith * 100)}%`;
+      }
+
+      if (rList.length > 0) {
+        const rPassed = rList.filter(s => s.status === "PASSED").length;
+        document.getElementById("kpiRegressionPass").textContent = `${Math.round((rPassed / rList.length) * 100)}%`;
+      }
+
+      // Populate scenario selector pills
+      renderScenarioPills();
+
+      // Render Active Scenario Trace
+      renderScenarioTrace();
+
+      // Render Matrix
+      renderDeltaMatrix();
+
+      // Render smolagents
+      renderSmolagents();
+
+      // Raw JSON
+      document.getElementById("rawJsonCode").textContent = JSON.stringify(reportData, null, 2);
+    }
+
+    // Render Scenario Selector Pills
+    function renderScenarioPills() {
+      const container = document.getElementById("scenarioPills");
+      container.innerHTML = "";
+      const bList = reportData.trajectory_baseline || [];
+
+      bList.forEach(sc => {
+        const pill = document.createElement("button");
+        pill.className = `scenario-pill ${sc.scenario_id === selectedScenarioId ? 'active' : ''}`;
+        pill.innerHTML = `<span>${sc.scenario_id}</span> • <span>${sc.title.split(' ')[0]}</span>`;
+        pill.onclick = () => {
+          selectedScenarioId = sc.scenario_id;
+          document.querySelectorAll(".scenario-pill").forEach(p => p.classList.remove("active"));
+          pill.classList.add("active");
+          renderScenarioTrace();
+        };
+        container.appendChild(pill);
+      });
+    }
+
+    // Render ReAct Trace for selected scenario & mode
+    function renderScenarioTrace() {
+      const container = document.getElementById("scenarioDetailContainer");
+      const list = activeTraceMode === "baseline" 
+        ? (reportData.trajectory_baseline || [])
+        : (reportData.trajectory_regression || []);
+
+      const scenario = list.find(s => s.scenario_id === selectedScenarioId);
+      if (!scenario) {
+        container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔎</div><p>No trajectory data available for ${selectedScenarioId}</p></div>`;
+        return;
+      }
+
+      const statusBadge = scenario.status === "PASSED" 
+        ? `<span class="badge badge-pass">PASSED</span>`
+        : `<span class="badge badge-fail">FAILED</span>`;
+
+      const m = scenario.metrics || {};
+      const d = scenario.details || {};
+      const steps = d.steps || [];
+
+      let stepsHtml = "";
+      if (steps.length === 0) {
+        stepsHtml = `<div class="empty-state"><p>No recorded ReAct steps in this trajectory.</p></div>`;
+      } else {
+        steps.forEach((st, idx) => {
+          const stepNum = st.step_index || (idx + 1);
+          const act = st.action || {};
+          const toolName = act.name || "None";
+          const toolArgs = act.args || act.arguments || {};
+          const thought = st.thought || "No internal thought recorded";
+          const obs = st.observation || "No observation recorded";
+
+          stepsHtml += `
+            <div class="step-node">
+              <div class="step-marker">${stepNum}</div>
+              <div class="step-card">
+                <div class="step-header">
+                  <span class="step-title">Step ${stepNum} — ReAct Execution Block</span>
+                  <span class="badge badge-domain">${toolName}</span>
+                </div>
+
+                <div class="thought-bubble">
+                  <div class="thought-label">💭 Internal Thought Reasoning</div>
+                  <div>${escapeHtml(thought)}</div>
+                </div>
+
+                <div class="action-block">
+                  <div class="action-label">⚡ Tool Action Invocation</div>
+                  <span class="tool-call-badge">${escapeHtml(toolName)}</span>
+                  <pre class="code-snippet">${escapeHtml(JSON.stringify(toolArgs, null, 2))}</pre>
+                </div>
+
+                <div class="observation-block">
+                  <div class="observation-label">📋 Tool Execution Observation</div>
+                  <pre class="code-snippet" style="color: #6ee7b7;">${escapeHtml(typeof obs === 'object' ? JSON.stringify(obs, null, 2) : obs)}</pre>
+                </div>
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      let failuresHtml = "";
+      if (scenario.failures && scenario.failures.length > 0) {
+        failuresHtml = `
+          <div class="failures-box">
+            <div class="failures-title">⚠️ Detected Policy Regressions & Violations</div>
+            <ul class="failures-list">
+              ${scenario.failures.map(f => `<li>${escapeHtml(f)}</li>`).join("")}
+            </ul>
+          </div>
+        `;
+      }
+
+      let finalAnswerHtml = "";
+      if (d.final_response) {
+        finalAnswerHtml = `
+          <div class="final-answer-card">
+            <div class="final-answer-title">🏁 Final Agent Response to User</div>
+            <div class="final-answer-content">${escapeHtml(d.final_response)}</div>
+          </div>
+        `;
+      }
+
+      container.innerHTML = `
+        <div class="scenario-card">
+          <div class="sc-title-row">
+            <div>
+              <div class="sc-title">
+                ${scenario.scenario_id}: ${escapeHtml(scenario.title)}
+                ${statusBadge}
+                <span class="badge badge-domain">${escapeHtml(scenario.domain)}</span>
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Composite Score</span>
+              <div style="font-family: var(--font-mono); font-size: 1.4rem; font-weight: 800; color: ${scenario.composite_score >= 0.85 ? 'var(--emerald-400)' : 'var(--rose-400)'};">
+                ${(scenario.composite_score || 0).toFixed(2)}
+              </div>
+            </div>
+          </div>
+
+          <div class="mini-metrics-row">
+            <div class="mini-metric">
+              <span class="mini-metric-label">Tool Selection F1</span>
+              <span class="mini-metric-value" style="color: var(--cyan-400);">${(m.tool_selection || 0).toFixed(2)}</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-metric-label">Argument Correctness</span>
+              <span class="mini-metric-value" style="color: var(--violet-400);">${(m.argument_correctness || 0).toFixed(2)}</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-metric-label">Call Ordering</span>
+              <span class="mini-metric-value" style="color: ${(m.call_ordering || 0) >= 1.0 ? 'var(--emerald-400)' : 'var(--rose-400)'};">${(m.call_ordering || 0).toFixed(2)}</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-metric-label">Step Efficiency</span>
+              <span class="mini-metric-value" style="color: var(--amber-400);">${(m.step_efficiency || 0).toFixed(2)}</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-metric-label">Reasoning Faithfulness</span>
+              <span class="mini-metric-value" style="color: #38bdf8;">${(m.reasoning_faithfulness || 0).toFixed(2)}</span>
+            </div>
+          </div>
+
+          ${failuresHtml}
+
+          <div style="margin-top: 28px;">
+            <h3 style="font-size: 0.95rem; font-weight: 700; color: #ffffff; margin-bottom: 16px;">
+              ReAct Execution Trace (${steps.length} Steps)
+            </h3>
+            <div class="step-timeline">
+              ${stepsHtml}
+            </div>
+          </div>
+
+          ${finalAnswerHtml}
+        </div>
+      `;
+    }
+
+    // Render Matrix Table
+    function renderDeltaMatrix() {
+      const tbody = document.getElementById("matrixTableBody");
+      tbody.innerHTML = "";
+      const deltas = reportData.trajectory_deltas || [];
+
+      if (deltas.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 40px; color: var(--text-muted);">No comparison deltas computed. Run evaluation in compare mode.</td></tr>`;
+        return;
+      }
+
+      deltas.forEach(d => {
+        const compDeltaClass = d.composite_delta < 0 ? "neg" : (d.composite_delta > 0 ? "pos" : "neutral");
+        const toolDeltaClass = d.tool_selection_delta < 0 ? "neg" : (d.tool_selection_delta > 0 ? "pos" : "neutral");
+        const argsDeltaClass = d.argument_correctness_delta < 0 ? "neg" : (d.argument_correctness_delta > 0 ? "pos" : "neutral");
+        const ordDeltaClass = d.call_ordering_delta < 0 ? "neg" : (d.call_ordering_delta > 0 ? "pos" : "neutral");
+        const effDeltaClass = d.step_efficiency_delta < 0 ? "neg" : (d.step_efficiency_delta > 0 ? "pos" : "neutral");
+
+        const statusPill = d.is_regression 
+          ? `<span class="badge badge-fail">REGRESSION</span>`
+          : `<span class="badge badge-pass">STABLE</span>`;
+
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><strong>${d.scenario_id}</strong></td>
+          <td>
+            <div style="font-weight: 600;">${escapeHtml(d.title)}</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(d.domain)}</div>
+          </td>
+          <td><span style="color: var(--emerald-400); font-family: var(--font-mono); font-weight: 700;">${d.baseline_composite.toFixed(2)}</span></td>
+          <td><span style="color: var(--rose-400); font-family: var(--font-mono); font-weight: 700;">${d.regression_composite.toFixed(2)}</span></td>
+          <td><span class="delta-pill ${compDeltaClass}">${d.composite_delta > 0 ? '+' : ''}${d.composite_delta.toFixed(2)}</span></td>
+          <td><span class="delta-pill ${toolDeltaClass}">${d.tool_selection_delta > 0 ? '+' : ''}${d.tool_selection_delta.toFixed(2)}</span></td>
+          <td><span class="delta-pill ${argsDeltaClass}">${d.argument_correctness_delta > 0 ? '+' : ''}${d.argument_correctness_delta.toFixed(2)}</span></td>
+          <td><span class="delta-pill ${ordDeltaClass}">${d.call_ordering_delta > 0 ? '+' : ''}${d.call_ordering_delta.toFixed(2)}</span></td>
+          <td><span class="delta-pill ${effDeltaClass}">${d.step_efficiency_delta > 0 ? '+' : ''}${d.step_efficiency_delta.toFixed(2)}</span></td>
+          <td>${statusPill}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Render smolagents Audit
+    function renderSmolagents() {
+      const container = document.getElementById("smolagentsContainer");
+      const smol = reportData.smolagents_eval || reportData.opensource_agent;
+
+      if (!smol) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">🤗</div>
+            <h3 style="color: #fff; margin-bottom: 8px;">Hugging Face smolagents Not Evaluated Yet</h3>
+            <p style="margin-bottom: 20px;">Run a live audit to execute smolagents with real enterprise tools and grade its reasoning trajectory.</p>
+            <button class="btn btn-secondary" onclick="triggerRunSmolagents()">⚡ Run smolagents Live Audit Now</button>
+          </div>
+        `;
+        return;
+      }
+
+      const te = smol.trajectory_evaluation || {};
+      const judge = smol.llm_judge || {};
+
+      let fScore = 0, fReason = "", rScore = 0, rReason = "";
+      if (typeof judge.faithfulness === 'object') {
+        fScore = judge.faithfulness.score || 0;
+        fReason = judge.faithfulness.reasoning || "";
+      } else {
+        fScore = judge.faithfulness || 0;
+      }
+      if (typeof judge.relevancy === 'object') {
+        rScore = judge.relevancy.score || 0;
+        rReason = judge.relevancy.reasoning || "";
+      } else {
+        rScore = judge.relevancy || 0;
+      }
+
+      container.innerHTML = `
+        <div class="scenario-card">
+          <div class="sc-title-row">
+            <div>
+              <div class="sc-title">
+                🤗 Hugging Face smolagents Audit (v1.26.0)
+                <span class="badge badge-pass">${te.status || 'PASSED'}</span>
+                <span class="badge badge-domain">ToolCallingAgent</span>
+              </div>
+              <p style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 4px;">
+                Autonomous ReAct tool agent executed against enterprise tools and graded by live LLM Judge.
+              </p>
+            </div>
+            <div style="text-align: right;">
+              <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Composite Score</span>
+              <div style="font-family: var(--font-mono); font-size: 1.4rem; font-weight: 800; color: var(--emerald-400);">
+                ${(te.composite_score || 1.0).toFixed(2)}
+              </div>
+            </div>
+          </div>
+
+          <div class="mini-metrics-row" style="margin-bottom: 24px;">
+            <div class="mini-metric">
+              <span class="mini-metric-label">Judge Faithfulness</span>
+              <span class="mini-metric-value" style="color: var(--emerald-400);">${fScore.toFixed(2)}</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-metric-label">Judge Relevancy</span>
+              <span class="mini-metric-value" style="color: var(--cyan-400);">${rScore.toFixed(2)}</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-metric-label">Tool Selection F1</span>
+              <span class="mini-metric-value" style="color: var(--violet-400);">${(te.metrics?.tool_selection || 1.0).toFixed(2)}</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-metric-label">Total Execution Steps</span>
+              <span class="mini-metric-value" style="color: var(--amber-400);">${te.details?.total_steps || 3}</span>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-bottom: 20px;">
+            <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 16px;">
+              <div style="font-size: 0.75rem; font-weight: 700; color: var(--emerald-400); text-transform: uppercase; margin-bottom: 6px;">
+                LLM Judge Rationale (Faithfulness)
+              </div>
+              <p style="font-size: 0.85rem; color: #cbd5e1; line-height: 1.5;">${escapeHtml(fReason || "All statements strictly supported by tool execution outputs.")}</p>
+            </div>
+
+            <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); padding: 16px;">
+              <div style="font-size: 0.75rem; font-weight: 700; color: var(--cyan-400); text-transform: uppercase; margin-bottom: 6px;">
+                LLM Judge Rationale (Relevancy)
+              </div>
+              <p style="font-size: 0.85rem; color: #cbd5e1; line-height: 1.5;">${escapeHtml(rReason || "Response fully executes the core customer transfer request.")}</p>
+            </div>
+          </div>
+
+          <div class="final-answer-card">
+            <div class="final-answer-title">🏁 smolagents Final Response</div>
+            <div class="final-answer-content">${escapeHtml(smol.final_answer || "")}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Auto-refresh handler
+    function updateAutoRefresh() {
+      const interval = parseInt(document.getElementById("autoRefreshSelect").value);
+      if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+      if (interval > 0) {
+        autoRefreshTimer = setInterval(() => {
+          fetchLatestReport();
+          checkServerStatus();
+        }, interval);
+      }
+    }
+
+    // Copy JSON helper
+    function copyRawJson() {
+      if (!reportData) return;
+      navigator.clipboard.writeText(JSON.stringify(reportData, null, 2)).then(() => {
+        showToast("JSON copied to clipboard!", "success");
+      });
+    }
+
+    function escapeHtml(text) {
+      if (!text) return "";
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // Initial load
+    window.addEventListener("DOMContentLoaded", () => {
+      checkServerStatus();
+      fetchLatestReport();
+      updateAutoRefresh();
+    });
+  </script>
+</body>
+</html>

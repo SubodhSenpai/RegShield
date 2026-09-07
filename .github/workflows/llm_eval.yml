@@ -1,0 +1,66 @@
+name: LLM Regression Verification Harness
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # ─────────────────────────────────────────────────────
+  # Job 1: Framework validation (no API key required)
+  # Runs deterministic mock tests to validate the
+  # evaluation framework itself works correctly.
+  # ─────────────────────────────────────────────────────
+  validate-framework:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Code Repository
+      uses: actions/checkout@v4
+
+    - name: Configure Runtime Python Environment
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Resolve Application Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run Demo Mode Tests (Mock Judge)
+      env:
+        DEMO_MODE: "true"
+      run: |
+        pytest -v -s tests/test_benchmark.py -k "baseline or regression or TestTokenEfficiency or TestKeywordCoverage or TestConciseness"
+
+  # ─────────────────────────────────────────────────────
+  # Job 2: Live pipeline regression detection
+  # Requires OPENROUTER_API_KEY secret to be configured.
+  # Only runs if the API key is available.
+  # ─────────────────────────────────────────────────────
+  evaluate-pipeline:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.OPENROUTER_API_KEY != '' }}
+    needs: validate-framework
+
+    steps:
+    - name: Checkout Code Repository
+      uses: actions/checkout@v4
+
+    - name: Configure Runtime Python Environment
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Resolve Application Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run Live Regression Test Suite
+      env:
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      run: |
+        pytest -v -s tests/test_benchmark.py -k "test_production_pipeline_regression"

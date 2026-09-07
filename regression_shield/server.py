@@ -12,6 +12,7 @@ import logging
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse
 from datetime import datetime, timezone
+from typing import Optional
 
 from regression_shield.core.trajectory_evaluator import AgentTrajectoryEvaluator
 
@@ -21,6 +22,14 @@ logger = logging.getLogger("regression_shield.server")
 WORKSPACE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _START_TIME = time.time()
 _LATEST_REPORT = {}
+
+# Evaluation & Judge Runtime Configuration
+_CONFIG = {
+    "api_key": os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+    "model": os.environ.get("REGSHIELD_MODEL", "minimax/minimax-m2.7:free"),
+    "base_url": os.environ.get("REGSHIELD_BASE_URL", "https://openrouter.ai/api/v1"),
+    "use_llm_judge": False,
+}
 
 
 def save_report_data(data: dict):
@@ -74,6 +83,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 "uptime_seconds": uptime,
                 "sdk_version": "0.2.0",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "active_model": _CONFIG.get("model"),
+                "base_url": _CONFIG.get("base_url"),
+                "llm_judge_configured": bool(_CONFIG.get("api_key")),
             })
             return
 
@@ -147,7 +159,22 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         "expected_order": payload.get("expected_order", []),
                     }
 
-                evaluator = AgentTrajectoryEvaluator()
+                # Resolve parameters per request or fallback to server config
+                req_api_key = payload.get("api_key") or _CONFIG.get("api_key")
+                req_model = payload.get("model") or _CONFIG.get("model")
+                req_base_url = payload.get("base_url") or _CONFIG.get("base_url")
+                req_use_judge = payload.get("use_llm_judge", _CONFIG.get("use_llm_judge", False))
+
+                evaluator = AgentTrajectoryEvaluator(
+                    api_key=req_api_key,
+                    model=req_model,
+                    base_url=req_base_url,
+                    use_llm_judge=req_use_judge,
+                    min_tool_selection=payload.get("min_tool_selection", 0.85),
+                    min_argument_correctness=payload.get("min_argument_correctness", 0.85),
+                    min_order_accuracy=payload.get("min_order_accuracy", 1.00),
+                    min_trajectory_efficiency=payload.get("min_trajectory_efficiency", 0.70),
+                )
                 report = evaluator.evaluate_scenario(scenario, trajectory)
 
                 # Persist to latest_report for live dashboard
@@ -166,6 +193,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "composite_score": report["composite_score"],
                     "metrics": report["metrics"],
                     "failures": report["failures"],
+                    "judge_audit": report.get("judge_audit"),
                     "details": report["details"],
                 })
             except Exception as err:
@@ -176,7 +204,23 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self._send_json_response({"error": "Unknown API endpoint"}, 404)
 
 
-def start_server(port: int = 8000):
+def start_server(
+    port: int = 8000,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    base_url: Optional[str] = None,
+    use_llm_judge: bool = False,
+):
+    global _CONFIG
+    if api_key:
+        _CONFIG["api_key"] = api_key
+    if model:
+        _CONFIG["model"] = model
+    if base_url:
+        _CONFIG["base_url"] = base_url
+    if use_llm_judge:
+        _CONFIG["use_llm_judge"] = use_llm_judge
+
     server_address = ("", port)
     try:
         httpd = HTTPServer(server_address, DashboardHandler)
@@ -192,6 +236,8 @@ def start_server(port: int = 8000):
     print("  RegressionShield Dynamic Dashboard Server is ONLINE")
     print(f"  * Dashboard URL: http://localhost:{port}")
     print(f"  * Ingestion API: POST http://localhost:{port}/api/evaluate-trajectory")
+    if _CONFIG.get("model"):
+        print(f"  * Model: {_CONFIG['model']} (Judge: {'Enabled' if _CONFIG.get('use_llm_judge') else 'Optional/Per-Request'})")
     print("=" * 65)
 
     try:
@@ -202,4 +248,20 @@ def start_server(port: int = 8000):
 
 
 if __name__ == "__main__":
-    start_server()
+    import argparse
+    parser = argparse.ArgumentParser(description="Start RegressionShield Dashboard Server")
+    parser.add_argument("--port", "-p", type=int, default=8000, help="Port to listen on (default: 8000)")
+    parser.add_argument("--api-key", default=None, help="API key for LLM judge")
+    parser.add_argument("--model", default=None, help="Default model identifier")
+    parser.add_argument("--base-url", default=None, help="Base URL for OpenAI-compatible API")
+    parser.add_argument("--llm-judge", action="store_true", help="Enable LLM judge by default")
+    args = parser.parse_args()
+
+    start_server(
+        port=args.port,
+        api_key=args.api_key,
+        model=args.model,
+        base_url=args.base_url,
+        use_llm_judge=args.llm_judge,
+    )
+

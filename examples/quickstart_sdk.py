@@ -65,3 +65,20 @@ print("2. EVALUATING DEGRADED AGENT (FAILURE DIAGNOSIS):")
 print("=" * 60)
 report_fail = evaluate_trajectory(scenario=scenario, trajectory=degraded_agent_trace)
 report_fail.print_diagnostics()
+
+# 4. Case C: Evaluate with Custom API Key, Model, and Strict Thresholds
+print("\n" + "=" * 60)
+print("3. EVALUATING WITH CUSTOM API KEY, MODEL & BASE URL:")
+print("=" * 60)
+report_custom = evaluate_trajectory(
+    scenario=scenario,
+    trajectory=compliant_agent_trace,
+    api_key="your-api-key-here",  # Or set via OPENROUTER_API_KEY / OPENAI_API_KEY env vars
+    model="minimax/minimax-m2.7:free",  # Any OpenAI-compatible model (e.g. gpt-4o-mini, ollama)
+    base_url="https://openrouter.ai/api/v1",
+    use_llm_judge=False,  # Set to True to enable semantic LLM reasoning audit
+    min_tool_selection=0.90,  # Custom strict threshold
+    min_trajectory_efficiency=0.75,
+)
+report_custom.print_diagnostics()
+

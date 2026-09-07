@@ -82,7 +82,14 @@ report = evaluate_trajectory(
         StepTrace(1, thought="Verifying identity.", action_name="verify_identity", action_args={"customer_id": "CUST-908"}, observation="VERIFIED"),
         StepTrace(2, thought="Checking balance.", action_name="check_balance", action_args={"account_id": "ACCT-4401"}, observation="12000.0"),
         StepTrace(3, thought="Executing transfer.", action_name="execute_wire_transfer", action_args={"amount": 4500.0}, observation="SUCCESS"),
-    ]
+    ],
+    # Custom model & API key mapping:
+    api_key="your-api-key",                  # Or OPENROUTER_API_KEY / OPENAI_API_KEY
+    model="minimax/minimax-m2.7:free",       # Any model: gpt-4o-mini, claude, ollama
+    base_url="https://openrouter.ai/api/v1", # OpenAI-compatible endpoint
+    use_llm_judge=False,                     # Optional semantic reasoning verification
+    min_tool_selection=0.85,                 # Custom quality thresholds
+    min_trajectory_efficiency=0.70,
 )
 
 print(f"Status: {report.status} | Composite: {report.composite_score}")
@@ -98,11 +105,29 @@ Composite Score: 0.42
   -> Tool Order Accuracy (0.00) < threshold (1.00). Prerequisite violated: 'verify_identity' never called
 ```
 
-### 2. Drop-in LangChain Callback Tracer
+### 2. Configurable Arguments & Control Parameters
+
+Every evaluation interface in RegressionShield allows users to map their own API keys, models, and thresholds:
+
+| Parameter | Type | Default | Description |
+|:----------|:-----|:--------|:------------|
+| `api_key` | `str` | `None` (or env var) | API key for OpenAI-compatible LLM judge (OpenRouter, OpenAI, Groq, etc.). |
+| `model` | `str` | `"minimax/minimax-m2.7:free"` | LLM model identifier to use for semantic reasoning verification. |
+| `base_url` | `str` | `"https://openrouter.ai/api/v1"` | Custom OpenAI-compatible API base URL (e.g. `http://localhost:11434/v1` for Ollama, vLLM). |
+| `use_llm_judge` | `bool` | `False` | When `True`, executes an LLM-as-a-judge audit verifying thought-observation faithfulness. |
+| `min_tool_selection` | `float` | `0.85` | Minimum Tool Selection F1 threshold required to pass. |
+| `min_argument_correctness` | `float` | `0.85` | Minimum argument schema correctness score. |
+| `min_order_accuracy` | `float` | `1.00` | Minimum prerequisite sequence adherence score. |
+| `min_trajectory_efficiency` | `float` | `0.70` | Minimum step efficiency and loop avoidance threshold. |
+
+### 3. Drop-in LangChain Callback Tracer
 ```python
 from regression_shield import RegressionShieldCallbackHandler
 
-handler = RegressionShieldCallbackHandler()
+handler = RegressionShieldCallbackHandler(
+    api_key="your-api-key",
+    model="gpt-4o-mini",
+)
 
 # Pass handler into any LangChain agent execution:
 agent_executor.invoke({"input": "Transfer $4,500 to ACCT-9912"}, config={"callbacks": [handler]})
@@ -112,80 +137,88 @@ report = handler.evaluate(scenario)
 report.print_diagnostics()
 ```
 
-### 3. Using the `regshield` CLI
+### 4. Zero-Code Evaluation Decorator
+```python
+from regression_shield.adapters.decorator import evaluate_agent_trace
+
+@evaluate_agent_trace(
+    scenario=scenario,
+    model="minimax/minimax-m2.7:free",
+    use_llm_judge=False,
+)
+def run_my_agent(user_query: str):
+    # Agent executes its ReAct loop
+    return {"steps": [...], "final_response": "..."}
+
+result, report = run_my_agent("Process wire transfer")
+print("Agent Passed:", report.passed)
+```
+
+### 5. Using the `regshield` CLI
 ```bash
-# Evaluate agent trajectories from any JSON file:
+# 1. Evaluate agent trajectories from any JSON file:
 regshield eval --file my_trajectories.json
 
-# Start the dynamic dashboard server:
-regshield serve --port 8000
+# 2. Evaluate with a custom model and API key:
+regshield eval --file my_trajectories.json \
+  --api-key "sk-or-..." \
+  --model "minimax/minimax-m2.7:free" \
+  --llm-judge \
+  --min-tool-selection 0.90
+
+# 3. Start the dynamic dashboard server with custom model config:
+regshield serve --port 8000 --model "minimax/minimax-m2.7:free"
 ```
 
 ---
 
-## 🖥️ Dynamic Web Dashboard & Local Server
+## 🖥️ Dynamic Web Dashboard & REST Ingestion API
 
-RegressionShield features a modern, dynamic web dashboard backed by a local REST API server:
+RegressionShield features a dynamic web dashboard backed by a local REST API server:
 
 ### Starting the Server
 ```bash
 # Start the dynamic dashboard server on port 8000:
-python server.py
+regshield serve --port 8000
 
-# Or via the CLI runner:
-python demo_runner.py --serve
+# Or via Python module:
+python -m regression_shield.server --port 8000
 ```
 
 Once running, navigate to **`http://localhost:8000`** in your browser:
-- **🟢 Live Server Connection**: Shows connection status and active OpenRouter LLM judge model (`minimax/minimax-m2.7:free`).
-- **⚡ Live Evaluation Triggers**: Click *"Run Live Trajectory Eval"* or *"smolagents Audit"* to trigger live agent reasoning evaluations directly from your browser.
-- **🔍 Interactive ReAct Step Inspector**: Step-by-step visual trace (`Thought` ➔ `Action` ➔ `Observation`) with JSON argument syntax highlighting.
-- **📊 Baseline vs. Regression Delta Matrix**: Side-by-side comparison highlighting policy regressions ($\Delta -0.50$, $\Delta -1.00$) and root causes.
-- **🤗 Hugging Face smolagents Audit**: Real-time inspection of open-source agent tool execution and LLM judge rationale.
+- **🟢 Live Server Connection**: Shows connection status, active model, and uptime.
+- **🔍 Interactive ReAct Step Inspector**: Step-by-step visual trace (`Thought` ➔ `Action` ➔ `Observation`) with syntax highlighting.
+- **📊 Baseline vs. Regression Delta Matrix**: Side-by-side comparison highlighting policy regressions and failure diagnostics.
 
----
+### External Ingestion REST API (`POST /api/evaluate-trajectory`)
+Any agent running anywhere (Python, Node.js, Go, cURL) can post trajectories directly into RegressionShield with custom API keys and models:
 
-## ⚡ Quick Start
-
-### 1. Environment Configuration
-Create a `.env` file in the project root:
-```env
-OPENROUTER_API_KEY=your_key_here
-JUDGE_MODEL=minimax/minimax-m2.7:free
-```
-
-### 2. Run Live Agentic Reasoning Evaluations
 ```bash
-# Default: Runs Baseline vs. Regression Trajectory comparison and saves report
-python demo_runner.py
-
-# Live Hugging Face smolagents audit
-python demo_runner.py --opensource
-
-# Evaluate baseline agent only
-python demo_runner.py --baseline
-
-# Evaluate regressed agent only
-python demo_runner.py --regression
+curl -X POST http://localhost:8000/api/evaluate-trajectory \
+  -H "Content-Type: application/json" \
+  -d '{
+    "scenario_id": "FIN_001",
+    "expected_tools": ["verify_identity", "check_balance", "execute_wire_transfer"],
+    "model": "gpt-4o-mini",
+    "api_key": "your-key-here",
+    "steps": [
+      {
+        "step_index": 1,
+        "thought": "Checking customer identity first.",
+        "action": {"type": "tool_call", "name": "verify_identity", "args": {"customer_id": "CUST-908"}},
+        "observation": "VERIFIED"
+      }
+    ]
+  }'
 ```
 
 ---
 
 ## 🧪 Automated Testing (Pytest)
 
-Run all unit and trajectory evaluation tests:
+Run all unit and trajectory evaluation tests (100% pass rate, offline & deterministic):
 ```bash
-# Run entire test suite (100% pass rate)
-pytest -v
-
-# Run agentic reasoning and metric tests
-pytest -v tests/test_agent_reasoning.py
-
-# Run trajectory evaluator tests
-pytest -v tests/test_trajectory_eval.py
-
-# Run live OpenRouter agent tests
-pytest -v tests/test_live_agent.py
+pytest -v tests/
 ```
 
 ---
@@ -193,35 +226,31 @@ pytest -v tests/test_live_agent.py
 ## 📁 Repository Structure
 
 ```
-RL environments/
-├── config/
-│   ├── __init__.py
-│   └── settings.py               # Central thresholds and API config
-├── core/
-│   ├── __init__.py
-│   ├── agent_metrics.py          # ToolSelection, ArgumentCorrectness, ToolCallOrder, StepEfficiency
-│   ├── trajectory_evaluator.py   # Agent trajectory evaluation orchestrator
-│   └── verifiers.py              # LLM judge verification and token efficiency
-├── agent/
-│   ├── __init__.py
-│   ├── live_tool_agent.py        # Live function-calling agent (OpenRouter ReAct loop)
-│   └── tools.py                  # Enterprise tool schema definitions & executor
-├── integrations/
-│   ├── __init__.py
-│   └── smolagents_evaluator.py   # Hugging Face smolagents integration
-├── data/
-│   └── agent_trajectories.json   # Trajectory scenarios (Fintech wire, Cloud SRE, E-commerce)
+RL environments/ (Branch: SDK)
+├── regression_shield/
+│   ├── __init__.py               # Top-level SDK API (evaluate_trajectory, AgentTrajectoryEvaluator, LLMJudge)
+│   ├── models.py                 # Pydantic/dataclass models (StepTrace, ScenarioSpec, EvaluationReport)
+│   ├── cli.py                    # regshield CLI (eval, serve, demo)
+│   ├── server.py                 # Dynamic web dashboard & REST ingestion server
+│   ├── core/
+│   │   ├── agent_metrics.py      # Core reasoning metrics (ToolSelection, Arguments, Order, Efficiency, Faithfulness)
+│   │   ├── trajectory_evaluator.py # Central evaluation orchestrator
+│   │   └── llm_judge.py          # OpenAI-compatible semantic LLM judge
+│   └── adapters/
+│       ├── langchain.py          # LangChain callback handler tracer
+│       ├── smolagents.py         # Hugging Face smolagents trace extractor & evaluator
+│       └── decorator.py          # @evaluate_agent_trace decorator
 ├── dashboard/
-│   └── index.html                # Dynamic visual ReAct trace & evaluation dashboard
+│   ├── index.html                # Visual ReAct trace & evaluation dashboard
+│   ├── styles.css                # Premium dark glassmorphic styling
+│   └── app.js                    # Live evaluation & polling logic
+├── examples/
+│   ├── quickstart_sdk.py         # 2-line quickstart with custom api_key & model
+│   └── sample_scenarios.json     # Curated benchmark scenarios
 ├── tests/
-│   ├── test_agent_reasoning.py   # Core reasoning metrics & composite unit tests
-│   ├── test_trajectory_eval.py   # Trajectory & tool calling tests
-│   ├── test_fallback_models.py   # OpenRouter fallback cascade tests
-│   └── test_live_agent.py        # Live tool calling agent tests
-├── reports/
-│   └── latest_report.json        # Dynamically generated live evaluation report
-├── server.py                     # Dynamic HTTP server & REST API
-├── demo_runner.py                # Live CLI demo runner & server launcher
+│   ├── test_agent_reasoning.py   # Unit tests for reasoning metrics
+│   └── test_sdk.py               # Unit tests for SDK, CLI, and LLM judge
+├── pyproject.toml                # Package configuration & entrypoint (regshield)
 └── README.md                     # Documentation
 ```
 
@@ -229,3 +258,4 @@ RL environments/
 
 ## 📄 License
 MIT License.
+

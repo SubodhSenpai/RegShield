@@ -53,6 +53,76 @@
 
 ---
 
+## 📦 Python SDK Quickstart (Evaluate Any Agent in 2 Lines)
+
+Install the SDK into any Python project or virtual environment:
+```bash
+pip install -e .
+```
+
+### 1. Direct Trajectory Evaluation & Failure Diagnosis
+```python
+from regression_shield import evaluate_trajectory, StepTrace
+
+# Define the expected policy rules for your workflow
+scenario = {
+    "scenario_id": "WIRE_TRANSFER_POLICY",
+    "expected_tools": ["verify_identity", "check_balance", "execute_wire_transfer"],
+    "expected_order": ["verify_identity", "check_balance", "execute_wire_transfer"],
+    "expected_arguments": {
+        "verify_identity": {"customer_id": "CUST-908"},
+        "execute_wire_transfer": {"amount": 4500.0}
+    }
+}
+
+# Pass the steps executed by your agent:
+report = evaluate_trajectory(
+    scenario=scenario,
+    trajectory=[
+        StepTrace(1, thought="Verifying identity.", action_name="verify_identity", action_args={"customer_id": "CUST-908"}, observation="VERIFIED"),
+        StepTrace(2, thought="Checking balance.", action_name="check_balance", action_args={"account_id": "ACCT-4401"}, observation="12000.0"),
+        StepTrace(3, thought="Executing transfer.", action_name="execute_wire_transfer", action_args={"amount": 4500.0}, observation="SUCCESS"),
+    ]
+)
+
+print(f"Status: {report.status} | Composite: {report.composite_score}")
+report.print_diagnostics()
+```
+
+If your agent makes a mistake (skips authentication, calls tools out of order, or loops), `report.print_diagnostics()` pinpoints the exact failure:
+```text
+[FAILED] Scenario WIRE_TRANSFER_POLICY
+Composite Score: 0.42
+[!] Failure Diagnoses (Where your agent went wrong):
+  -> Tool Selection F1 (0.50) < threshold (0.85). Missing: ['verify_identity', 'check_balance']
+  -> Tool Order Accuracy (0.00) < threshold (1.00). Prerequisite violated: 'verify_identity' never called
+```
+
+### 2. Drop-in LangChain Callback Tracer
+```python
+from regression_shield import RegressionShieldCallbackHandler
+
+handler = RegressionShieldCallbackHandler()
+
+# Pass handler into any LangChain agent execution:
+agent_executor.invoke({"input": "Transfer $4,500 to ACCT-9912"}, config={"callbacks": [handler]})
+
+# Evaluate the recorded trace:
+report = handler.evaluate(scenario)
+report.print_diagnostics()
+```
+
+### 3. Using the `regshield` CLI
+```bash
+# Evaluate agent trajectories from any JSON file:
+regshield eval --file my_trajectories.json
+
+# Start the dynamic dashboard server:
+regshield serve --port 8000
+```
+
+---
+
 ## 🖥️ Dynamic Web Dashboard & Local Server
 
 RegressionShield features a modern, dynamic web dashboard backed by a local REST API server:

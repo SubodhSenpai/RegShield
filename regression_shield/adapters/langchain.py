@@ -16,7 +16,17 @@ class RegressionShieldCallbackHandler:
         report.print_diagnostics()
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        use_llm_judge: bool = False,
+    ):
+        self.api_key = api_key
+        self.model = model
+        self.base_url = base_url
+        self.use_llm_judge = use_llm_judge
         self.steps: List[StepTrace] = []
         self._current_step_idx = 1
         self._last_thought = ""
@@ -70,10 +80,23 @@ class RegressionShieldCallbackHandler:
         return [s.to_dict() for s in self.steps]
 
     def evaluate(
-        self, scenario: Any, final_response: str = ""
+        self,
+        scenario: Any,
+        final_response: str = "",
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        use_llm_judge: Optional[bool] = None,
+        **kwargs: Any,
     ) -> EvaluationReport:
         """Evaluate the collected trajectory against a scenario policy."""
-        evaluator = AgentTrajectoryEvaluator()
+        evaluator = AgentTrajectoryEvaluator(
+            api_key=api_key or self.api_key,
+            model=model or self.model,
+            base_url=base_url or self.base_url,
+            use_llm_judge=use_llm_judge if use_llm_judge is not None else self.use_llm_judge,
+            **kwargs,
+        )
         raw_rep = evaluator.evaluate_scenario(
             scenario,
             {"steps": self.get_trajectory(), "final_response": final_response},
@@ -87,4 +110,5 @@ class RegressionShieldCallbackHandler:
             metrics=raw_rep["metrics"],
             failures=raw_rep["failures"],
             details=raw_rep["details"],
+            judge_audit=raw_rep.get("judge_audit"),
         )

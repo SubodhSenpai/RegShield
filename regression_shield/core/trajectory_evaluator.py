@@ -1,7 +1,7 @@
 """Core Trajectory Evaluation Orchestrator for RegressionShield SDK."""
 
 import logging
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Optional
 
 from regression_shield.core.agent_metrics import (
     ToolSelectionMetric,
@@ -11,6 +11,7 @@ from regression_shield.core.agent_metrics import (
     ReasoningFaithfulnessMetric,
     CompositeTrajectoryScore,
 )
+from regression_shield.core.llm_judge import LLMJudge
 from regression_shield.models import ScenarioSpec, StepTrace, EvaluationReport
 
 logger = logging.getLogger("regression_shield.evaluator")
@@ -21,11 +22,19 @@ class AgentTrajectoryEvaluator:
 
     def __init__(
         self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        use_llm_judge: bool = False,
         min_tool_selection: float = 0.85,
         min_argument_correctness: float = 0.85,
         min_order_accuracy: float = 1.00,
         min_trajectory_efficiency: float = 0.70,
     ):
+        self.api_key = api_key
+        self.model = model
+        self.base_url = base_url
+        self.use_llm_judge = use_llm_judge
         self.min_tool_selection = min_tool_selection
         self.min_argument_correctness = min_argument_correctness
         self.min_order_accuracy = min_order_accuracy
@@ -35,15 +44,23 @@ class AgentTrajectoryEvaluator:
         self,
         scenario: Union[ScenarioSpec, Dict[str, Any]],
         trajectory_data: Union[List[Union[StepTrace, Dict[str, Any]]], Dict[str, Any]],
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        use_llm_judge: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Evaluate an agent trajectory against a scenario policy specification.
 
         Args:
             scenario: Scenario dict or ScenarioSpec.
             trajectory_data: List of steps or dict with 'steps' and 'final_response'.
+            api_key: Optional API key for LLM-as-a-judge verification.
+            model: Optional model name (e.g. minimax/minimax-m2.7:free, gpt-4o-mini).
+            base_url: Optional OpenAI-compatible base URL.
+            use_llm_judge: If True, executes semantic judge evaluation on reasoning & outcome.
 
         Returns:
-            Dict report with status, composite_score, metrics, and failures.
+            Dict report with status, composite_score, metrics, judge_audit, and failures.
         """
         # Normalize scenario
         if isinstance(scenario, ScenarioSpec):
@@ -54,6 +71,7 @@ class AgentTrajectoryEvaluator:
         scenario_id = sc_dict.get("scenario_id", "AT_CUSTOM")
         title = sc_dict.get("title", f"Scenario {scenario_id}")
         domain = sc_dict.get("domain", "General")
+        goal = sc_dict.get("goal") or sc_dict.get("input_prompt") or title
         expected_tools = sc_dict.get("expected_tools", [])
         expected_arguments = sc_dict.get("expected_arguments", {})
         expected_order = sc_dict.get("expected_order", [])
@@ -134,6 +152,33 @@ class AgentTrajectoryEvaluator:
                 f"Total steps: {efficiency_res['total_steps']}, Redundant calls: {efficiency_res['redundant_calls']}"
             )
 
+        # 8. Optional LLM-as-a-Judge semantic verification
+        eff_api_key = api_key or self.api_key
+        eff_model = model or self.model
+        eff_base_url = base_url or self.base_url
+        should_judge = (
+            use_llm_judge
+            if use_llm_judge is not None
+            else self.use_llm_judge
+        )
+
+        judge_audit = None
+        if should_judge and eff_api_key:
+            judge = LLMJudge(
+                api_key=eff_api_key,
+                model=eff_model,
+                base_url=eff_base_url,
+            )
+            judge_audit = judge.verify_reasoning_and_outcome(
+                goal=goal,
+                trajectory_steps=steps,
+                final_response=final_response,
+            )
+            if not judge_audit.get("passed", True):
+                failures.append(
+                    f"LLM Judge [{judge_audit.get('model')}]: {judge_audit.get('reasoning')}"
+                )
+
         is_passed = len(failures) == 0
 
         report = {
@@ -143,6 +188,7 @@ class AgentTrajectoryEvaluator:
             "status": "PASSED" if is_passed else "FAILED",
             "composite_score": composite_score,
             "metrics": metric_scores,
+            "judge_audit": judge_audit,
             "details": {
                 "invoked_tools": invoked_tools,
                 "expected_tools": expected_tools,
@@ -154,6 +200,7 @@ class AgentTrajectoryEvaluator:
                 "total_steps": len(steps),
                 "final_response": final_response,
                 "steps": steps,
+                "judge": judge_audit,
             },
             "failures": failures,
         }

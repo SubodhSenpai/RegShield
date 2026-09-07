@@ -86,6 +86,7 @@ class EvaluationReport:
     metrics: Dict[str, float]
     failures: List[str]
     details: Dict[str, Any]
+    judge_audit: Optional[Dict[str, Any]] = None
 
     @property
     def passed(self) -> bool:
@@ -98,6 +99,14 @@ class EvaluationReport:
         print("-" * 50)
         for metric_name, val in self.metrics.items():
             print(f"  * {metric_name:<24s}: {val:.2f}")
+
+        if self.judge_audit and self.judge_audit.get("reasoning"):
+            model_name = self.judge_audit.get("model", "LLM")
+            j_score = self.judge_audit.get("score", 1.0)
+            j_reason = self.judge_audit.get("reasoning", "")
+            print(f"\n[Judge Audit - {model_name}]:")
+            print(f"  Score: {j_score:.2f} | Reasoning: {j_reason}")
+
         if self.failures:
             print("\n[!] Failure Diagnoses (Where your agent went wrong):")
             for f in self.failures:

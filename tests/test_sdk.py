@@ -137,3 +137,163 @@ class TestLangChainAdapter:
         scenario = {"expected_tools": ["fetch_user"]}
         report = handler.evaluate(scenario)
         assert report.passed is True
+
+
+class TestConfigurableParametersAndJudge:
+    def test_evaluate_trajectory_custom_arguments(self):
+        scenario = {
+            "scenario_id": "SDK_PARAM_01",
+            "title": "Custom Threshold & Model Scenario",
+            "expected_tools": ["tool_a", "tool_b"],
+        }
+        steps = [
+            StepTrace(
+                step_index=1,
+                thought="Using tool_a.",
+                action_name="tool_a",
+                action_args={},
+                observation="OK",
+            )
+        ]
+
+        # By default min_tool_selection is 0.85; tool_a only gives F1 = 0.67 -> fails default
+        report_default = evaluate_trajectory(scenario=scenario, trajectory=steps)
+        assert report_default.passed is False
+
+        # With lowered threshold 0.50 -> passes!
+        report_custom = evaluate_trajectory(
+            scenario=scenario,
+            trajectory=steps,
+            api_key="sk-test-key",
+            model="minimax/minimax-m2.7:free",
+            base_url="https://openrouter.ai/api/v1",
+            min_tool_selection=0.50,
+        )
+        assert report_custom.passed is True
+        assert report_custom.metrics["tool_selection"] > 0.50
+
+    def test_llm_judge_initialization_and_mock(self, monkeypatch):
+        import httpx
+        from regression_shield.core.llm_judge import LLMJudge
+
+        judge = LLMJudge(
+            api_key="sk-mock-key",
+            model="minimax/minimax-m2.7:free",
+            base_url="https://openrouter.ai/api/v1",
+        )
+        assert judge.model == "minimax/minimax-m2.7:free"
+        assert judge.base_url == "https://openrouter.ai/api/v1"
+        assert judge.api_key == "sk-mock-key"
+
+        class MockResponse:
+            status_code = 200
+            def json(self):
+                return {
+                    "choices": [{
+                        "message": {
+                            "content": '```json\n{"passed": true, "score": 0.98, "reasoning": "Reasoning accurately mirrors observations."}\n```'
+                        }
+                    }]
+                }
+            @property
+            def text(self):
+                return ""
+
+        monkeypatch.setattr(httpx.Client, "post", lambda self, *args, **kwargs: MockResponse())
+
+        audit = judge.verify_reasoning_and_outcome(
+            goal="Process refund",
+            trajectory_steps=[{"thought": "Checking policy", "observation": "Eligible"}],
+            final_response="Refund processed.",
+        )
+
+        assert audit["passed"] is True
+        assert audit["score"] == 0.98
+        assert "Reasoning accurately" in audit["reasoning"]
+        assert audit["model"] == "minimax/minimax-m2.7:free"
+
+    def test_top_level_llm_judge_integration_with_mock(self, monkeypatch):
+        import httpx
+
+        class MockResponse:
+            status_code = 200
+            def json(self):
+                return {
+                    "choices": [{
+                        "message": {
+                            "content": '{"passed": true, "score": 0.95, "reasoning": "All steps verified cleanly."}'
+                        }
+                    }]
+                }
+            @property
+            def text(self):
+                return ""
+
+        monkeypatch.setattr(httpx.Client, "post", lambda self, *args, **kwargs: MockResponse())
+
+        scenario = {
+            "scenario_id": "SDK_JUDGE_01",
+            "title": "Wire Transfer with Judge",
+            "expected_tools": ["verify_id"],
+        }
+        steps = [
+            StepTrace(
+                step_index=1,
+                thought="Checking user ID.",
+                action_name="verify_id",
+                action_args={"user_id": "U-123"},
+                observation="VERIFIED",
+            )
+        ]
+
+        report = evaluate_trajectory(
+            scenario=scenario,
+            trajectory=steps,
+            api_key="sk-test",
+            model="minimax/minimax-m2.7:free",
+            use_llm_judge=True,
+        )
+
+        assert report.passed is True
+        assert report.judge_audit is not None
+        assert report.judge_audit["passed"] is True
+        assert report.judge_audit["score"] == 0.95
+
+    def test_cli_execution_with_model_argument(self, tmp_path, capsys):
+        from regression_shield.cli import run_eval_from_file
+        import json
+
+        sample_file = tmp_path / "test_scenarios.json"
+        sample_file.write_text(json.dumps([{
+            "scenario": {
+                "scenario_id": "CLI_TEST_01",
+                "title": "CLI Test Scenario",
+                "expected_tools": ["tool_x"]
+            },
+            "trajectory": [
+                {
+                    "step_index": 1,
+                    "thought": "Invoking tool_x",
+                    "action": {"type": "tool_call", "name": "tool_x", "args": {}},
+                    "observation": "DONE"
+                }
+            ]
+        }]), encoding="utf-8")
+
+        run_eval_from_file(
+            file_path=str(sample_file),
+            model="minimax/minimax-m2.7:free",
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+        captured = capsys.readouterr().out
+        assert "CLI_TEST_01" in captured
+        assert "PASSED" in captured
+        assert "minimax/minimax-m2.7:free" in captured
+
+    def test_server_status_and_config(self):
+        from regression_shield.server import _CONFIG, start_server
+        assert "minimax/minimax-m2.7:free" in _CONFIG["model"]
+        assert "https://openrouter.ai/api/v1" in _CONFIG["base_url"]
+
+

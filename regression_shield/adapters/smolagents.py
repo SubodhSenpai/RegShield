@@ -47,11 +47,24 @@ def extract_smolagents_trajectory(agent: Any) -> List[Dict[str, Any]]:
 
 
 def evaluate_smolagent(
-    agent: Any, scenario: Any, final_response: str = ""
+    agent: Any,
+    scenario: Any,
+    final_response: str = "",
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    base_url: Optional[str] = None,
+    use_llm_judge: bool = False,
+    **kwargs: Any,
 ) -> EvaluationReport:
     """Evaluate a finished smolagent run against a scenario policy specification."""
     steps = extract_smolagents_trajectory(agent)
-    evaluator = AgentTrajectoryEvaluator()
+    evaluator = AgentTrajectoryEvaluator(
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
+        use_llm_judge=use_llm_judge,
+        **kwargs,
+    )
     raw_rep = evaluator.evaluate_scenario(
         scenario, {"steps": steps, "final_response": final_response}
     )
@@ -64,4 +77,5 @@ def evaluate_smolagent(
         metrics=raw_rep["metrics"],
         failures=raw_rep["failures"],
         details=raw_rep["details"],
+        judge_audit=raw_rep.get("judge_audit"),
     )

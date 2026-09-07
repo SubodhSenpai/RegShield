@@ -1,4 +1,4 @@
-"""RegressionShield — Dedicated Agentic AI Reasoning & Trajectory Evaluation SDK.
+"""RegressionShield — Dedicated Agentic AI Reasoning & Execution Trace Evaluation SDK.
 
 Evaluates autonomous agent execution chains:
 - Tool Selection F1 (Precision & Recall)
@@ -21,20 +21,28 @@ from regression_shield.core.agent_metrics import (
     ToolCallOrderMetric,
     StepEfficiencyMetric,
     ReasoningFaithfulnessMetric,
+    CompositeTraceScore,
     CompositeTrajectoryScore,
 )
 from regression_shield.core.llm_judge import LLMJudge
-from regression_shield.core.trajectory_evaluator import AgentTrajectoryEvaluator
+from regression_shield.core.trajectory_evaluator import (
+    AgentTraceEvaluator,
+    AgentTrajectoryEvaluator,
+)
 from regression_shield.adapters.langchain import RegressionShieldCallbackHandler
-from regression_shield.adapters.smolagents import evaluate_smolagent, extract_smolagents_trajectory
+from regression_shield.adapters.smolagents import (
+    evaluate_smolagent,
+    extract_smolagents_trace,
+    extract_smolagents_trajectory,
+)
 from regression_shield.adapters.decorator import evaluate_agent_trace
 
 __version__ = "0.2.0"
 
 
-def evaluate_trajectory(
+def evaluate_trace(
     scenario: Union[ScenarioSpec, Dict[str, Any]],
-    trajectory: Union[List[Union[StepTrace, Dict[str, Any]]], Dict[str, Any]],
+    trace: Optional[Union[List[Union[StepTrace, Dict[str, Any]]], Dict[str, Any]]] = None,
     api_key: Optional[str] = None,
     model: Optional[str] = None,
     base_url: Optional[str] = None,
@@ -42,13 +50,14 @@ def evaluate_trajectory(
     min_tool_selection: float = 0.85,
     min_argument_correctness: float = 0.85,
     min_order_accuracy: float = 1.00,
-    min_trajectory_efficiency: float = 0.70,
+    min_trace_efficiency: float = 0.70,
+    **kwargs: Any,
 ) -> EvaluationReport:
-    """Convenience top-level evaluation function.
+    """Convenience top-level evaluation function for agent execution traces.
 
     Args:
         scenario: Dict or ScenarioSpec with expected tools, arguments, and ordering.
-        trajectory: List of steps or dict with 'steps' and 'final_response'.
+        trace: List of steps or dict with 'steps' and 'final_response'.
         api_key: Optional API key for LLM-as-a-judge semantic evaluation.
         model: Optional model identifier (e.g., minimax/minimax-m2.7:free, gpt-4o-mini).
         base_url: Optional OpenAI-compatible API base URL (e.g. OpenRouter, Ollama, vLLM).
@@ -56,12 +65,18 @@ def evaluate_trajectory(
         min_tool_selection: Minimum Tool Selection F1 threshold (default 0.85).
         min_argument_correctness: Minimum Argument Schema Accuracy threshold (default 0.85).
         min_order_accuracy: Minimum Ordering Accuracy threshold (default 1.00).
-        min_trajectory_efficiency: Minimum Step Efficiency threshold (default 0.70).
+        min_trace_efficiency: Minimum Step Efficiency threshold (default 0.70).
 
     Returns:
         EvaluationReport with status, composite score, metrics, judge_audit, and failure diagnostics.
     """
-    evaluator = AgentTrajectoryEvaluator(
+    raw_trace = trace if trace is not None else kwargs.get("trajectory")
+    if raw_trace is None:
+        raw_trace = []
+
+    eff_thresh = kwargs.get("min_trajectory_efficiency", min_trace_efficiency)
+
+    evaluator = AgentTraceEvaluator(
         api_key=api_key,
         model=model,
         base_url=base_url,
@@ -69,9 +84,9 @@ def evaluate_trajectory(
         min_tool_selection=min_tool_selection,
         min_argument_correctness=min_argument_correctness,
         min_order_accuracy=min_order_accuracy,
-        min_trajectory_efficiency=min_trajectory_efficiency,
+        min_trace_efficiency=eff_thresh,
     )
-    raw = evaluator.evaluate_scenario(scenario, trajectory)
+    raw = evaluator.evaluate_scenario(scenario, raw_trace)
     return EvaluationReport(
         scenario_id=raw["scenario_id"],
         title=raw["title"],
@@ -85,8 +100,14 @@ def evaluate_trajectory(
     )
 
 
+# Backward compatibility alias
+evaluate_trajectory = evaluate_trace
+
+
 __all__ = [
+    "evaluate_trace",
     "evaluate_trajectory",
+    "AgentTraceEvaluator",
     "AgentTrajectoryEvaluator",
     "LLMJudge",
     "ScenarioSpec",
@@ -97,9 +118,12 @@ __all__ = [
     "ToolCallOrderMetric",
     "StepEfficiencyMetric",
     "ReasoningFaithfulnessMetric",
+    "CompositeTraceScore",
     "CompositeTrajectoryScore",
     "RegressionShieldCallbackHandler",
     "evaluate_smolagent",
+    "extract_smolagents_trace",
     "extract_smolagents_trajectory",
     "evaluate_agent_trace",
 ]
+

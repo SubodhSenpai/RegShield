@@ -6,8 +6,8 @@ from regression_shield.models import StepTrace, EvaluationReport
 from regression_shield.core.trajectory_evaluator import AgentTrajectoryEvaluator
 
 
-def extract_smolagents_trajectory(agent: Any) -> List[Dict[str, Any]]:
-    """Extract standard ReAct trajectory from a Hugging Face smolagents ToolCallingAgent."""
+def extract_smolagents_trace(agent: Any) -> List[Dict[str, Any]]:
+    """Extract standard ReAct execution trace from a Hugging Face smolagents ToolCallingAgent."""
     extracted = []
     step_idx = 1
 
@@ -44,6 +44,11 @@ def extract_smolagents_trajectory(agent: Any) -> List[Dict[str, Any]]:
                 step_idx += 1
 
     return extracted
+
+
+# Backward compatibility alias
+extract_smolagents_trajectory = extract_smolagents_trace
+
 
 
 def evaluate_smolagent(

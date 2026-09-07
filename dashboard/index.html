@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RegressionShield — Agentic AI Reasoning & Execution Trajectory Dashboard</title>
-  <meta name="description" content="Dynamic evaluation and observability dashboard for Agentic AI reasoning chains, tool calling accuracy, ReAct execution trajectories, and policy regressions." />
+  <title>RegressionShield — Agentic AI Reasoning & Execution Trace Dashboard</title>
+  <meta name="description" content="Dynamic evaluation and observability dashboard for Agentic AI reasoning chains, tool calling accuracy, ReAct execution traces, and policy regressions." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -914,7 +914,7 @@
         <div class="logo-badge">🛡️</div>
         <div>
           <h1 class="brand-title">RegressionShield</h1>
-          <div class="brand-subtitle">Agentic AI Reasoning & Trajectory Observability</div>
+          <div class="brand-subtitle">Agentic AI Reasoning & Trace Observability</div>
         </div>
       </div>
 
@@ -926,7 +926,7 @@
 
         <button id="btnRunEval" class="btn btn-primary" onclick="triggerRunEval()">
           <span>⚡</span>
-          <span id="btnRunEvalText">Run Live Trajectory Eval</span>
+          <span id="btnRunEvalText">Run Live Trace Eval</span>
         </button>
 
         <button id="btnRunSmol" class="btn btn-secondary" onclick="triggerRunSmolagents()">
@@ -1192,7 +1192,7 @@
       const btn = document.getElementById("btnRunEval");
       const btnText = document.getElementById("btnRunEvalText");
       btn.disabled = true;
-      btnText.innerHTML = `<div class="spinner"></div> Running Live Trajectory Eval...`;
+      btnText.innerHTML = `<div class="spinner"></div> Running Live Trace Eval...`;
       showToast("Live Agentic Reasoning evaluation triggered...", "info");
 
       try {
@@ -1212,7 +1212,7 @@
         showToast("Error triggering eval: " + err.message, "error");
       } finally {
         btn.disabled = false;
-        btnText.textContent = "Run Live Trajectory Eval";
+        btnText.textContent = "Run Live Trace Eval";
       }
     }
 
@@ -1259,8 +1259,8 @@
       }
 
       // Compute KPIs
-      const bList = reportData.trajectory_baseline || [];
-      const rList = reportData.trajectory_regression || [];
+      const bList = reportData.trace_baseline || reportData.trajectory_baseline || [];
+      const rList = reportData.trace_regression || reportData.trajectory_regression || [];
 
       if (bList.length > 0) {
         const bPassed = bList.filter(s => s.status === "PASSED").length;
@@ -1301,7 +1301,7 @@
     function renderScenarioPills() {
       const container = document.getElementById("scenarioPills");
       container.innerHTML = "";
-      const bList = reportData.trajectory_baseline || [];
+      const bList = reportData.trace_baseline || reportData.trajectory_baseline || [];
 
       bList.forEach(sc => {
         const pill = document.createElement("button");
@@ -1321,12 +1321,12 @@
     function renderScenarioTrace() {
       const container = document.getElementById("scenarioDetailContainer");
       const list = activeTraceMode === "baseline" 
-        ? (reportData.trajectory_baseline || [])
-        : (reportData.trajectory_regression || []);
+        ? (reportData.trace_baseline || reportData.trajectory_baseline || [])
+        : (reportData.trace_regression || reportData.trajectory_regression || []);
 
       const scenario = list.find(s => s.scenario_id === selectedScenarioId);
       if (!scenario) {
-        container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔎</div><p>No trajectory data available for ${selectedScenarioId}</p></div>`;
+        container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">🔎</div><p>No trace data available for ${selectedScenarioId}</p></div>`;
         return;
       }
 

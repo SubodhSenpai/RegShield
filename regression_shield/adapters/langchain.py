@@ -75,9 +75,13 @@ class RegressionShieldCallbackHandler:
         self._current_tool_name = ""
         self._current_tool_args = {}
 
-    def get_trajectory(self) -> List[Dict[str, Any]]:
-        """Return the collected trajectory as standard dictionary steps."""
+    def get_trace(self) -> List[Dict[str, Any]]:
+        """Return the collected execution trace as standard dictionary steps."""
         return [s.to_dict() for s in self.steps]
+
+    # Backward compatibility alias
+    get_trajectory = get_trace
+
 
     def evaluate(
         self,

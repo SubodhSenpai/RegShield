@@ -135,24 +135,24 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        # 1. Ingestion Endpoint for Any External Agent Trace
-        if path in ("/api/evaluate-trajectory", "/api/ingest"):
+        # 1. Ingestion Endpoint for Any External Agent Execution Trace
+        if path in ("/api/evaluate-trace", "/api/evaluate-trajectory", "/api/ingest"):
             try:
                 content_len = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(content_len).decode("utf-8") if content_len > 0 else "{}"
                 payload = json.loads(body)
 
                 scenario = payload.get("scenario")
-                trajectory = payload.get("trajectory") or payload.get("steps") or {}
+                raw_trace = payload.get("trace") or payload.get("trajectory") or payload.get("steps") or {}
 
-                if isinstance(trajectory, list):
-                    trajectory = {"steps": trajectory, "final_response": payload.get("final_response", "")}
+                if isinstance(raw_trace, list):
+                    raw_trace = {"steps": raw_trace, "final_response": payload.get("final_response", "")}
 
                 if not scenario:
                     sc_id = payload.get("scenario_id", "CUSTOM_AGENT")
                     scenario = {
                         "scenario_id": sc_id,
-                        "title": payload.get("title", f"Agent Trajectory: {sc_id}"),
+                        "title": payload.get("title", f"Agent Trace: {sc_id}"),
                         "domain": payload.get("domain", "General / Autonomous Agent"),
                         "expected_tools": payload.get("expected_tools", []),
                         "expected_arguments": payload.get("expected_arguments", {}),
@@ -164,6 +164,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 req_model = payload.get("model") or _CONFIG.get("model")
                 req_base_url = payload.get("base_url") or _CONFIG.get("base_url")
                 req_use_judge = payload.get("use_llm_judge", _CONFIG.get("use_llm_judge", False))
+                eff_thresh = payload.get("min_trace_efficiency", payload.get("min_trajectory_efficiency", 0.70))
 
                 evaluator = AgentTrajectoryEvaluator(
                     api_key=req_api_key,
@@ -173,16 +174,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     min_tool_selection=payload.get("min_tool_selection", 0.85),
                     min_argument_correctness=payload.get("min_argument_correctness", 0.85),
                     min_order_accuracy=payload.get("min_order_accuracy", 1.00),
-                    min_trajectory_efficiency=payload.get("min_trajectory_efficiency", 0.70),
+                    min_trace_efficiency=eff_thresh,
                 )
-                report = evaluator.evaluate_scenario(scenario, trajectory)
+                report = evaluator.evaluate_scenario(scenario, raw_trace)
 
                 # Persist to latest_report for live dashboard
                 report_data = _LATEST_REPORT or {}
-                sc_list = report_data.setdefault("trajectory_baseline", [])
+                sc_list = report_data.setdefault("trace_baseline", [])
                 sc_list = [c for c in sc_list if c.get("scenario_id") != report["scenario_id"]]
                 sc_list.append(report)
-                report_data["trajectory_baseline"] = sc_list
+                report_data["trace_baseline"] = sc_list
+                report_data["trajectory_baseline"] = sc_list  # Backward-compatible alias
                 report_data["timestamp"] = datetime.now(timezone.utc).isoformat()
                 save_report_data(report_data)
 
@@ -235,7 +237,7 @@ def start_server(
     print("=" * 65)
     print("  RegressionShield Dynamic Dashboard Server is ONLINE")
     print(f"  * Dashboard URL: http://localhost:{port}")
-    print(f"  * Ingestion API: POST http://localhost:{port}/api/evaluate-trajectory")
+    print(f"  * Ingestion API: POST http://localhost:{port}/api/evaluate-trace")
     if _CONFIG.get("model"):
         print(f"  * Model: {_CONFIG['model']} (Judge: {'Enabled' if _CONFIG.get('use_llm_judge') else 'Optional/Per-Request'})")
     print("=" * 65)

@@ -7,7 +7,7 @@ import argparse
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
-from regression_shield import evaluate_trajectory, AgentTrajectoryEvaluator
+from regression_shield import evaluate_trace, AgentTraceEvaluator
 
 
 def run_eval_from_file(
@@ -19,9 +19,10 @@ def run_eval_from_file(
     min_tool_selection: float = 0.85,
     min_argument_correctness: float = 0.85,
     min_order_accuracy: float = 1.00,
-    min_trajectory_efficiency: float = 0.70,
+    min_trace_efficiency: float = 0.70,
+    **kwargs: Any,
 ):
-    """Evaluate scenarios and trajectories provided in a JSON file."""
+    """Evaluate scenarios and execution traces provided in a JSON file."""
     if not os.path.exists(file_path):
         print(f"[!] Error: File not found: {file_path}")
         sys.exit(1)
@@ -30,7 +31,8 @@ def run_eval_from_file(
         data = json.load(f)
 
     items = data if isinstance(data, list) else [data]
-    evaluator = AgentTrajectoryEvaluator(
+    eff_thresh = kwargs.get("min_trajectory_efficiency", min_trace_efficiency)
+    evaluator = AgentTraceEvaluator(
         api_key=api_key,
         model=model,
         base_url=base_url,
@@ -38,10 +40,10 @@ def run_eval_from_file(
         min_tool_selection=min_tool_selection,
         min_argument_correctness=min_argument_correctness,
         min_order_accuracy=min_order_accuracy,
-        min_trajectory_efficiency=min_trajectory_efficiency,
+        min_trace_efficiency=eff_thresh,
     )
 
-    print(f"\n[*] Evaluating {len(items)} Agent Trajectory Scenarios from {file_path}...")
+    print(f"\n[*] Evaluating {len(items)} Agent Execution Trace Scenarios from {file_path}...")
     if model:
         print(f"[*] Judge Model: {model} (Endpoint: {base_url or 'https://openrouter.ai/api/v1'})")
     print()
@@ -49,8 +51,14 @@ def run_eval_from_file(
 
     for item in items:
         scenario = item.get("scenario") or item
-        trajectory = item.get("trajectory") or item.get("steps") or item.get("baseline_trajectory")
-        report = evaluator.evaluate_scenario(scenario, trajectory)
+        trace = (
+            item.get("trace")
+            or item.get("steps")
+            or item.get("baseline_trace")
+            or item.get("trajectory")
+            or item.get("baseline_trajectory")
+        )
+        report = evaluator.evaluate_scenario(scenario, trace)
 
         status_tag = "[PASS]" if report["status"] == "PASSED" else "[FAIL]"
         print(f"{status_tag} [{report['status']}] {report['scenario_id']}: {report['title']} (Composite: {report['composite_score']:.2f})")
@@ -90,13 +98,13 @@ def start_server_command(
 def main():
     parser = argparse.ArgumentParser(
         prog="regshield",
-        description="RegressionShield — Agentic AI Reasoning & Trajectory Evaluation CLI",
+        description="RegressionShield — Agentic AI Reasoning & Execution Trace Evaluation CLI",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Command: eval
-    eval_parser = subparsers.add_parser("eval", help="Evaluate agent trajectories from a JSON file")
-    eval_parser.add_argument("--file", "-f", required=True, help="Path to JSON file containing scenarios & trajectories")
+    eval_parser = subparsers.add_parser("eval", help="Evaluate agent execution traces from a JSON file")
+    eval_parser.add_argument("--file", "-f", required=True, help="Path to JSON file containing scenarios & execution traces")
     eval_parser.add_argument("--api-key", default=None, help="API key for LLM judge (or set OPENROUTER_API_KEY / OPENAI_API_KEY)")
     eval_parser.add_argument("--model", default=None, help="LLM judge model identifier (e.g. minimax/minimax-m2.7:free, gpt-4o-mini)")
     eval_parser.add_argument("--base-url", default=None, help="OpenAI-compatible API base URL (default: https://openrouter.ai/api/v1)")
@@ -104,7 +112,7 @@ def main():
     eval_parser.add_argument("--min-tool-selection", type=float, default=0.85, help="Minimum tool selection F1 (default: 0.85)")
     eval_parser.add_argument("--min-arg-correctness", type=float, default=0.85, help="Minimum argument schema accuracy (default: 0.85)")
     eval_parser.add_argument("--min-order-accuracy", type=float, default=1.00, help="Minimum tool ordering accuracy (default: 1.00)")
-    eval_parser.add_argument("--min-efficiency", type=float, default=0.70, help="Minimum trajectory step efficiency (default: 0.70)")
+    eval_parser.add_argument("--min-trace-efficiency", "--min-efficiency", type=float, default=0.70, help="Minimum step efficiency (default: 0.70)")
 
     # Command: serve
     serve_parser = subparsers.add_parser("serve", help="Start the dynamic web dashboard server")
@@ -134,7 +142,7 @@ def main():
             min_tool_selection=args.min_tool_selection,
             min_argument_correctness=args.min_arg_correctness,
             min_order_accuracy=args.min_order_accuracy,
-            min_trajectory_efficiency=args.min_efficiency,
+            min_trace_efficiency=args.min_trace_efficiency,
         )
     elif args.command == "serve":
         start_server_command(
@@ -161,4 +169,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

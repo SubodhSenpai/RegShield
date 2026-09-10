@@ -322,4 +322,31 @@ class TestConfigurableParametersAndJudge:
         assert "minimax/minimax-m2.7:free" in _CONFIG["model"]
         assert "https://openrouter.ai/api/v1" in _CONFIG["base_url"]
 
+    def test_report_to_dict_and_save(self, tmp_path):
+        import json
+        report = EvaluationReport(
+            scenario_id="TEST_PERSIST_01",
+            title="Persist Report Test",
+            domain="Test",
+            status="PASSED",
+            composite_score=0.95,
+            metrics={"tool_selection": 1.0, "argument_correctness": 0.9},
+            failures=[],
+            details={"steps": []},
+        )
+        data = report.to_dict()
+        assert data["scenario_id"] == "TEST_PERSIST_01"
+        assert data["composite_score"] == 0.95
+
+        out_file = tmp_path / "reports" / "latest_report.json"
+        saved_path = report.save(str(out_file))
+        assert str(out_file) == saved_path
+        assert out_file.exists()
+
+        with open(out_file, "r", encoding="utf-8") as f:
+            disk_data = json.load(f)
+        assert len(disk_data["trace_baseline"]) == 1
+        assert disk_data["trace_baseline"][0]["scenario_id"] == "TEST_PERSIST_01"
+
+
 

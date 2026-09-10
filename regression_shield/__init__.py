@@ -35,9 +35,9 @@ from regression_shield.adapters.smolagents import (
     extract_smolagents_trace,
     extract_smolagents_trajectory,
 )
-from regression_shield.adapters.decorator import evaluate_agent_trace
+from regression_shield.adapters.decorator import evaluate_agent_trace, shield
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 def evaluate_trace(
@@ -51,6 +51,9 @@ def evaluate_trace(
     min_argument_correctness: float = 0.85,
     min_order_accuracy: float = 1.00,
     min_trace_efficiency: float = 0.70,
+    save_report: bool = True,
+    sync_dashboard: bool = False,
+    dashboard_url: str = "http://localhost:8000",
     **kwargs: Any,
 ) -> EvaluationReport:
     """Convenience top-level evaluation function for agent execution traces.
@@ -66,6 +69,9 @@ def evaluate_trace(
         min_argument_correctness: Minimum Argument Schema Accuracy threshold (default 0.85).
         min_order_accuracy: Minimum Ordering Accuracy threshold (default 1.00).
         min_trace_efficiency: Minimum Step Efficiency threshold (default 0.70).
+        save_report: Automatically persist report to reports/latest_report.json for local dashboard (default True).
+        sync_dashboard: Post report directly to running dashboard server API (default False).
+        dashboard_url: Dashboard server base URL for syncing (default http://localhost:8000).
 
     Returns:
         EvaluationReport with status, composite score, metrics, judge_audit, and failure diagnostics.
@@ -87,7 +93,7 @@ def evaluate_trace(
         min_trace_efficiency=eff_thresh,
     )
     raw = evaluator.evaluate_scenario(scenario, raw_trace)
-    return EvaluationReport(
+    report = EvaluationReport(
         scenario_id=raw["scenario_id"],
         title=raw["title"],
         domain=raw["domain"],
@@ -98,6 +104,20 @@ def evaluate_trace(
         details=raw["details"],
         judge_audit=raw.get("judge_audit"),
     )
+
+    if save_report:
+        try:
+            report.save()
+        except Exception:
+            pass
+
+    if sync_dashboard:
+        try:
+            report.sync_to_dashboard(dashboard_url)
+        except Exception:
+            pass
+
+    return report
 
 
 # Backward compatibility alias

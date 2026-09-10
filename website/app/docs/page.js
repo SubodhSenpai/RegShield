@@ -76,12 +76,13 @@ result = evaluate_trace(scenario=scenario, trace=agent_trace)`,
   },
   metrics: {
     label: 'Scoring',
-    title: 'Four deterministic dimensions',
+    title: 'Five deterministic dimensions',
     metrics: [
-      { name: 'Tool Selection F1',     weight: '30%', desc: 'Precision and recall over expected_tools. Missing a required tool or calling unexpected tools lowers this score. Threshold: 0.85.' },
-      { name: 'Call Ordering',         weight: '30%', desc: 'Strict enforcement of expected_order prerequisites. Any inversion (e.g. deploy before test) zeros this score. Threshold: 1.00.' },
-      { name: 'Step Efficiency',       weight: '25%', desc: 'Ratio of optimal_step_count to actual steps taken. Repeated identical calls (loop thrashing) are counted as redundant and penalised. Threshold: 0.70.' },
-      { name: 'Reasoning Faithfulness', weight: '15%', desc: 'Verifies each thought is grounded in the preceding observation. Contradictions or fabricated state are flagged as hallucination. Threshold: 0.85.' },
+      { name: 'Tool Selection F1',     weight: '25%', desc: 'Precision and recall over expected_tools. Missing required tools or calling unauthorized/unexpected tools lowers this score. Threshold: 0.85.' },
+      { name: 'Argument Correctness',  weight: '25%', desc: 'Validates tool invocation arguments against expected parameter schemas and ground truth values. Threshold: 0.85.' },
+      { name: 'Call Ordering',         weight: '20%', desc: 'Strict enforcement of prerequisite sequences. Any inversion (e.g. deploy before test) zeroes this score. Threshold: 1.00.' },
+      { name: 'Step Efficiency',       weight: '15%', desc: 'Ratio of optimal_step_count to actual steps taken. Detects duplicate identical tool calls (loop thrashing) and penalizes excessive exploration. Threshold: 0.70.' },
+      { name: 'Reasoning Faithfulness', weight: '15%', desc: 'Verifies each thought is grounded in preceding observations. Flags when an agent hallucinates success despite error outputs. Threshold: 0.85.' },
     ],
   },
   langchain: {
@@ -152,10 +153,14 @@ result.print_diagnostics()`,
         "expected_order": ["run_unit_tests", "deploy_production"],
         "optimal_step_count": 2,
     },
-    on_violation="raise"   # or "warn" / "log"
+    on_violation="raise"   # raises RuntimeError if report.passed is False
 )
 def run_pipeline(task: str):
-    return my_agent.execute(task)`,
+    # Returns (execution_output, evaluation_report)
+    return my_agent.execute(task)
+
+output, report = run_pipeline("deploy v1.0.0")
+print("Quality gate passed:", report.passed)`,
     lang: 'python',
   },
   cicd: {
@@ -170,18 +175,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install regression-shield
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Run agent evals
-        run: python run_evals.py --output candidate_trace.json
+      - run: pip install -e .
 
       - name: Enforce quality gate
         run: |
-          regshield check \\
-            --trace    ./candidate_trace.json \\
-            --scenario ./scenario.json        \\
-            --baseline ./baselines/approved.json \\
-            --fail-on-regression
+          regshield check -f ./examples/sample_scenarios.json --fail-on-regression
           # Exit 0 = PASSED  |  Exit 1 = REGRESSION BLOCKED`,
     lang: 'yaml',
   },
@@ -230,154 +232,158 @@ export default function DocsPage() {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', minHeight: '100vh' }}>
-      {/* Sidebar */}
-      <aside style={{
-        position: 'sticky',
-        top: 56,
-        height: 'calc(100vh - 56px)',
-        borderRight: '1px solid #1a1a1a',
-        padding: '32px 0',
-        overflowY: 'auto',
-      }}>
-        <div style={{ padding: '0 20px', marginBottom: 24 }}>
-          <a href="/" style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#555', fontSize: 13, marginBottom: 24 }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M19 12H5M12 5l-7 7 7 7"/>
-            </svg>
-            Back to product
-          </a>
-          <span className="label">Documentation</span>
-        </div>
-
-        <nav style={{ display: 'flex', flexDirection: 'column' }}>
-          {SECTIONS.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setActive(s.id)}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                padding: '9px 20px',
-                fontSize: 13,
-                fontFamily: active === s.id ? 'var(--font)' : 'var(--font)',
-                fontWeight: active === s.id ? 500 : 400,
-                color: active === s.id ? '#f5f5f5' : '#555',
-                background: active === s.id ? '#141414' : 'transparent',
-                borderLeft: active === s.id ? '1px solid #2a2a2a' : '1px solid transparent',
-                borderRight: 'none',
-                borderTop: 'none',
-                borderBottom: 'none',
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-              }}
-            >
-              {s.label}
-            </button>
-          ))}
-        </nav>
-      </aside>
-
-      {/* Content */}
-      <article style={{ padding: '56px 64px 120px', maxWidth: 760 }}>
-        <div className="label" style={{ marginBottom: 12 }}>{sec.label}</div>
-        <h1 className="h2" style={{ marginBottom: 32 }}>{sec.title}</h1>
-
-        {/* Install command for quickstart */}
-        {sec.code && (
-          <div style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '10px 16px',
-            background: '#000',
-            border: '1px solid #1f1f1f',
-            borderRadius: 8,
-            marginBottom: 32,
-          }}>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 13, color: '#888' }}>$</span>
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{sec.code}</span>
+      <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', minHeight: '100vh' }}>
+        {/* Sidebar */}
+        <aside style={{
+          position: 'sticky',
+          top: 56,
+          height: 'calc(100vh - 56px)',
+          borderRight: '1px solid var(--border)',
+          background: 'var(--surface)',
+          padding: '32px 0',
+          overflowY: 'auto',
+        }}>
+          <div style={{ padding: '0 20px', marginBottom: 24 }}>
+            <a href="/" style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text3)', fontSize: 13, textDecoration: 'none', marginBottom: 20, fontWeight: 500 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5M12 5l-7 7 7 7"/>
+              </svg>
+              Back to product
+            </a>
+            <span className="label">Documentation</span>
           </div>
-        )}
 
-        {/* Snippet */}
-        {sec.snippet && (
-          <div className="code-block" style={{ marginBottom: 40 }}>
-            <div className="code-bar">
-              <span>{sec.lang}</span>
+          <nav style={{ display: 'flex', flexDirection: 'column' }}>
+            {SECTIONS.map((s) => (
               <button
-                onClick={copyCode}
+                key={s.id}
+                onClick={() => setActive(s.id)}
                 style={{
-                  background: 'none',
-                  border: '1px solid #2a2a2a',
-                  borderRadius: 4,
-                  padding: '3px 10px',
-                  fontFamily: 'var(--mono)',
-                  fontSize: 11,
-                  color: '#555',
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '9px 20px',
+                  fontSize: 13,
+                  fontFamily: 'var(--font)',
+                  fontWeight: active === s.id ? 600 : 400,
+                  color: active === s.id ? 'var(--text)' : 'var(--text3)',
+                  background: active === s.id ? 'var(--surface2)' : 'transparent',
+                  borderLeft: active === s.id ? '2px solid var(--text)' : '2px solid transparent',
+                  borderRight: 'none',
+                  borderTop: 'none',
+                  borderBottom: 'none',
                   cursor: 'pointer',
+                  transition: 'all 0.15s',
                 }}
               >
-                {copied ? 'copied' : 'copy'}
+                {s.label}
               </button>
-            </div>
-            <div className="code-body">
-              <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                <code>{sec.snippet}</code>
-              </pre>
-            </div>
-          </div>
-        )}
+            ))}
+          </nav>
+        </aside>
 
-        {/* Policy fields table */}
-        {sec.fields && (
-          <div style={{ border: '1px solid #1a1a1a', borderRadius: 10, overflow: 'hidden' }}>
+        {/* Content */}
+        <article style={{ padding: '56px 64px 120px', maxWidth: 840 }}>
+          <div className="label" style={{ marginBottom: 12 }}>{sec.label}</div>
+          <h1 className="h2" style={{ marginBottom: 32 }}>{sec.title}</h1>
+
+          {/* Install command for quickstart */}
+          {sec.code && (
             <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1.4fr 0.7fr 2fr',
-              padding: '12px 20px',
-              background: '#0d0d0d',
-              borderBottom: '1px solid #1a1a1a',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 12,
+              padding: '10px 16px',
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              boxShadow: 'var(--shadow-xs)',
+              marginBottom: 32,
             }}>
-              {['Field', 'Type', 'Description'].map((h) => (
-                <span key={h} style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#444', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</span>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 13, color: 'var(--text3)' }}>$</span>
+              <span style={{ fontFamily: 'var(--mono)', fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>{sec.code}</span>
+            </div>
+          )}
+
+          {/* Snippet */}
+          {sec.snippet && (
+            <div className="code-block" style={{ marginBottom: 40 }}>
+              <div className="code-bar">
+                <span>{sec.lang}</span>
+                <button
+                  onClick={copyCode}
+                  style={{
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 4,
+                    padding: '3px 10px',
+                    fontFamily: 'var(--mono)',
+                    fontSize: 11,
+                    color: 'var(--text2)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {copied ? 'copied' : 'copy'}
+                </button>
+              </div>
+              <div className="code-body">
+                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                  <code>{sec.snippet}</code>
+                </pre>
+              </div>
+            </div>
+          )}
+
+          {/* Policy fields table */}
+          {sec.fields && (
+            <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)', boxShadow: 'var(--shadow-xs)' }}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1.4fr 0.7fr 2fr',
+                padding: '12px 20px',
+                background: '#f8fafc',
+                borderBottom: '1px solid var(--border)',
+              }}>
+                {['Field', 'Type', 'Description'].map((h) => (
+                  <span key={h} style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>{h}</span>
+                ))}
+              </div>
+              {sec.fields.map(({ name, type, desc }, i) => (
+                <div
+                  key={name}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1.4fr 0.7fr 2fr',
+                    padding: '13px 20px',
+                    borderBottom: i < sec.fields.length - 1 ? '1px solid var(--border)' : 'none',
+                    background: i % 2 === 0 ? 'var(--surface)' : 'var(--bg)',
+                    alignItems: 'start',
+                  }}
+                >
+                  <code style={{ fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--text)', fontWeight: 600 }}>{name}</code>
+                  <code style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text3)' }}>{type}</code>
+                  <span className="body-sm">{desc}</span>
+                </div>
               ))}
             </div>
-            {sec.fields.map(({ name, type, desc }, i) => (
-              <div
-                key={name}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1.4fr 0.7fr 2fr',
-                  padding: '13px 20px',
-                  borderBottom: i < sec.fields.length - 1 ? '1px solid #0f0f0f' : 'none',
-                  alignItems: 'start',
-                }}
-              >
-                <code style={{ fontFamily: 'var(--mono)', fontSize: 12, color: '#79c0ff' }}>{name}</code>
-                <code style={{ fontFamily: 'var(--mono)', fontSize: 11, color: '#555' }}>{type}</code>
-                <span className="body-sm">{desc}</span>
-              </div>
-            ))}
-          </div>
-        )}
+          )}
 
-        {/* Metrics list */}
-        {sec.metrics && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {sec.metrics.map(({ name, weight, desc }) => (
-              <div key={name} className="card" style={{ padding: '20px 24px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <h3 className="h3" style={{ fontSize: 15 }}>{name}</h3>
-                  <span className="tag">{weight}</span>
+          {/* Metrics list */}
+          {sec.metrics && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {sec.metrics.map(({ name, weight, desc }) => (
+                <div key={name} className="card" style={{ padding: '20px 24px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <h3 className="h3" style={{ fontSize: 15 }}>{name}</h3>
+                    <span className="tag">{weight}</span>
+                  </div>
+                  <p className="body-sm">{desc}</p>
                 </div>
-                <p className="body-sm">{desc}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </article>
-    </div>
+              ))}
+            </div>
+          )}
+        </article>
+      </div>
   );
 }

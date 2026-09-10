@@ -199,19 +199,33 @@ regshield eval --file my_traces.json \
   --llm-judge \
   --min-tool-selection 0.90
 
-# 3. Start the dynamic dashboard server:
-regshield serve --port 8000 --model "minimax/minimax-m2.7:free"
+# 3. Start the bundled local dashboard server (auto-opens in default browser):
+regshield serve --open
+
+# Custom port or model defaults:
+regshield serve --port 8000 --model "minimax/minimax-m2.7:free" --no-open
 ```
+
+---
+
+## Bundled Web Dashboard (`regshield serve`)
+
+The complete interactive observability dashboard is **bundled directly inside the `regression-shield` package**. Any developer installing via `pip install regression-shield` can immediately visualize traces without needing to clone the repository or set up a frontend build chain:
+
+- **Local Hosting**: Runs entirely on the user's system (`http://localhost:8000`).
+- **Zero Configuration**: Auto-detects available ports if 8000 is occupied.
+- **Automatic Browser Launch**: Opens the dashboard automatically with `regshield serve --open` (or simply `regshield serve`).
+- **Reports Persisted Locally**: When traces are ingested, `reports/latest_report.json` is generated directly in the current working directory.
 
 ---
 
 ## REST Ingestion Server (`POST /api/evaluate-trace`)
 
-External agents written in any language (Python, TypeScript, Go, Rust, cURL) can post execution traces directly to the RegressionShield server:
+External agents written in any language (Python, TypeScript, Go, Rust, cURL) can post execution traces directly to the local RegressionShield server:
 
 ```bash
-# Start the ingestion server:
-regshield serve --port 8000
+# Start the ingestion server and dashboard:
+regshield serve
 ```
 
 Post an agent trace:

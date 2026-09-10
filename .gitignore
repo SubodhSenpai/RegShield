@@ -16,6 +16,21 @@ venv/
 # Reports (generated at runtime)
 reports/
 
+# Testing & Caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next.js / Website
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
 # IDE
 .idea/
 .vscode/

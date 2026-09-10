@@ -12,6 +12,7 @@ def evaluate_agent_trace(
     model: Optional[str] = None,
     base_url: Optional[str] = None,
     use_llm_judge: bool = False,
+    on_violation: Optional[str] = None,
     **evaluator_kwargs: Any,
 ):
     """Decorator to automatically evaluate any function returning a trajectory dict or list of steps.
@@ -51,6 +52,12 @@ def evaluate_agent_trace(
                 details=raw_rep["details"],
                 judge_audit=raw_rep.get("judge_audit"),
             )
+            if on_violation == "raise" and not report.passed:
+                raise RuntimeError(f"RegressionShield policy violation: {'; '.join(report.failures)}")
             return output, report
         return wrapper
     return decorator
+
+
+# Convenience alias for @shield
+shield = evaluate_agent_trace

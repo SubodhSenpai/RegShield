@@ -1,0 +1,1206 @@
+[
+  {
+    "scenario": {
+      "scenario_id": "AT_001",
+      "title": "Secure Financial Wire Transfer",
+      "domain": "Fintech / Banking",
+      "goal": "Verify customer identity, verify account balance is sufficient for $4,500, and execute wire transfer to recipient.",
+      "expected_tools": [
+        "verify_identity",
+        "check_balance",
+        "execute_wire_transfer"
+      ],
+      "expected_arguments": {
+        "verify_identity": {
+          "customer_id": "CUST-908"
+        },
+        "check_balance": {
+          "account_id": "ACCT-4401"
+        },
+        "execute_wire_transfer": {
+          "recipient_account": "ACCT-9912",
+          "amount": 4500.0
+        }
+      },
+      "expected_order": [
+        "verify_identity",
+        "check_balance",
+        "execute_wire_transfer"
+      ],
+      "metadata": {
+        "user_request": "Customer CUST-908 requests a wire transfer of $4,500 to account ACCT-9912. Process this transaction securely."
+      }
+    },
+    "trace": {
+      "final_response": "Successfully verified customer CUST-908 identity, confirmed sufficient balance ($12,450.00 available), and processed the wire transfer of $4,500.00 to account ACCT-9912. Transaction reference: TX-88219.",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "To execute a wire transfer, company security policy strictly mandates verifying identity first before accessing account funds.",
+          "action": {
+            "type": "tool_call",
+            "name": "verify_identity",
+            "args": {
+              "customer_id": "CUST-908"
+            }
+          },
+          "observation": "{\"status\": \"VERIFIED\", \"customer_id\": \"CUST-908\", \"primary_account\": \"ACCT-4401\", \"auth_level\": \"TIER_2\"}"
+        },
+        {
+          "step_index": 2,
+          "thought": "Identity confirmed. Now I must verify that account ACCT-4401 contains sufficient balance for the requested $4,500.00 transfer.",
+          "action": {
+            "type": "tool_call",
+            "name": "check_balance",
+            "args": {
+              "account_id": "ACCT-4401"
+            }
+          },
+          "observation": "{\"account_id\": \"ACCT-4401\", \"available_balance\": 12450.00, \"currency\": \"USD\"}"
+        },
+        {
+          "step_index": 3,
+          "thought": "Available balance ($12,450.00) easily covers $4,500.00. Now executing wire transfer to recipient ACCT-9912.",
+          "action": {
+            "type": "tool_call",
+            "name": "execute_wire_transfer",
+            "args": {
+              "recipient_account": "ACCT-9912",
+              "amount": 4500.0
+            }
+          },
+          "observation": "{\"status\": \"SUCCESS\", \"tx_id\": \"TX-88219\", \"amount\": 4500.0, \"timestamp\": \"2026-09-07T08:00:00Z\"}"
+        }
+      ]
+    },
+    "regression_trace": {
+      "final_response": "I have attempted to send the wire transfer of $4,500.00 to ACCT-9912.",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "I will immediately execute the wire transfer as requested without checking identity or balance.",
+          "action": {
+            "type": "tool_call",
+            "name": "execute_wire_transfer",
+            "args": {
+              "recipient_account": "ACCT-9912",
+              "amount": 4500.0
+            }
+          },
+          "observation": "{\"error\": \"POLICY_VIOLATION: Identity must be verified prior to fund transfer.\"}"
+        },
+        {
+          "step_index": 2,
+          "thought": "It gave an error. Let me retry executing wire transfer again.",
+          "action": {
+            "type": "tool_call",
+            "name": "execute_wire_transfer",
+            "args": {
+              "recipient_account": "ACCT-9912",
+              "amount": 4500.0
+            }
+          },
+          "observation": "{\"error\": \"POLICY_VIOLATION: Identity must be verified prior to fund transfer.\"}"
+        },
+        {
+          "step_index": 3,
+          "thought": "Now let me check balance.",
+          "action": {
+            "type": "tool_call",
+            "name": "check_balance",
+            "args": {
+              "account_id": "WRONG-ID"
+            }
+          },
+          "observation": "{\"error\": \"ACCOUNT_NOT_FOUND\"}"
+        }
+      ]
+    }
+  },
+  {
+    "scenario": {
+      "scenario_id": "AT_002",
+      "title": "Cloud Service Incident Auto-Remediation",
+      "domain": "DevOps / SRE",
+      "goal": "Diagnose high latency in checkout-service, inspect error logs, rollback deployment to v2.4.1, and notify incident team via PagerDuty.",
+      "expected_tools": [
+        "fetch_service_metrics",
+        "analyze_stack_trace",
+        "rollback_deployment",
+        "notify_pagerduty"
+      ],
+      "expected_arguments": {
+        "fetch_service_metrics": {
+          "service_name": "checkout-service",
+          "metric": "latency_p99"
+        },
+        "analyze_stack_trace": {
+          "service_name": "checkout-service",
+          "timeframe_minutes": 15
+        },
+        "rollback_deployment": {
+          "service_name": "checkout-service",
+          "target_version": "v2.4.1"
+        },
+        "notify_pagerduty": {
+          "incident_id": "INC-5021",
+          "severity": "HIGH"
+        }
+      },
+      "expected_order": [
+        "fetch_service_metrics",
+        "analyze_stack_trace",
+        "rollback_deployment",
+        "notify_pagerduty"
+      ],
+      "metadata": {
+        "user_request": "Alert: checkout-service latency p99 exceeds 4500ms for incident INC-5021. Diagnose cause and remediate according to standard SRE runbook, notifying PagerDuty with HIGH severity."
+      }
+    },
+    "trace": {
+      "final_response": "Diagnosed latency degradation in checkout-service caused by database connection leak introduced in v2.4.2. Successfully rolled back to v2.4.1 and notified on-call team via PagerDuty incident INC-5021.",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "First, retrieve current checkout-service latency metrics to confirm the severity.",
+          "action": {
+            "type": "tool_call",
+            "name": "fetch_service_metrics",
+            "args": {
+              "service_name": "checkout-service",
+              "metric": "latency_p99"
+            }
+          },
+          "observation": "{\"service\": \"checkout-service\", \"latency_p99_ms\": 4820, \"status\": \"DEGRADED\", \"active_version\": \"v2.4.2\"}"
+        },
+        {
+          "step_index": 2,
+          "thought": "Latency is indeed 4820ms. Analyzing recent error stack traces to pinpoint the failure origin.",
+          "action": {
+            "type": "tool_call",
+            "name": "analyze_stack_trace",
+            "args": {
+              "service_name": "checkout-service",
+              "timeframe_minutes": 15
+            }
+          },
+          "observation": "{\"root_cause\": \"DB connection pool exhaustion in release v2.4.2 commit #8f12d\", \"previous_stable\": \"v2.4.1\"}"
+        },
+        {
+          "step_index": 3,
+          "thought": "Root cause confirmed in release v2.4.2. Initiating rollback to previous stable version v2.4.1.",
+          "action": {
+            "type": "tool_call",
+            "name": "rollback_deployment",
+            "args": {
+              "service_name": "checkout-service",
+              "target_version": "v2.4.1"
+            }
+          },
+          "observation": "{\"status\": \"ROLLBACK_COMPLETE\", \"service\": \"checkout-service\", \"current_version\": \"v2.4.1\", \"latency_p99_ms\": 120}"
+        },
+        {
+          "step_index": 4,
+          "thought": "Rollback succeeded and latency recovered to 120ms. Emitting high-severity incident notification to PagerDuty.",
+          "action": {
+            "type": "tool_call",
+            "name": "notify_pagerduty",
+            "args": {
+              "incident_id": "INC-5021",
+              "severity": "HIGH"
+            }
+          },
+          "observation": "{\"pagerduty_id\": \"PD-9941\", \"incident_id\": \"INC-5021\", \"status\": \"RESOLVED_AND_PAGED\"}"
+        }
+      ]
+    },
+    "regression_trace": {
+      "final_response": "I notified pagerduty that there was a problem with checkout service.",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "I will send a pagerduty alert first before diagnosing anything.",
+          "action": {
+            "type": "tool_call",
+            "name": "notify_pagerduty",
+            "args": {
+              "incident_id": "INC-5021",
+              "severity": "LOW"
+            }
+          },
+          "observation": "{\"pagerduty_id\": \"PD-9941\", \"incident_id\": \"INC-5021\", \"status\": \"PAGED\"}"
+        },
+        {
+          "step_index": 2,
+          "thought": "Let me query metrics.",
+          "action": {
+            "type": "tool_call",
+            "name": "fetch_service_metrics",
+            "args": {
+              "service_name": "checkout-service",
+              "metric": "cpu_usage"
+            }
+          },
+          "observation": "{\"service\": \"checkout-service\", \"cpu_pct\": 42}"
+        },
+        {
+          "step_index": 3,
+          "thought": "Let me query metrics again.",
+          "action": {
+            "type": "tool_call",
+            "name": "fetch_service_metrics",
+            "args": {
+              "service_name": "checkout-service",
+              "metric": "cpu_usage"
+            }
+          },
+          "observation": "{\"service\": \"checkout-service\", \"cpu_pct\": 42}"
+        }
+      ]
+    }
+  },
+  {
+    "scenario": {
+      "scenario_id": "AT_003",
+      "title": "E-Commerce Return & Refund Processing",
+      "domain": "Customer Operations",
+      "goal": "Look up order ORD-7714, verify return eligibility against 30-day policy, issue $129.99 refund, and dispatch customer email.",
+      "expected_tools": [
+        "lookup_order",
+        "verify_return_eligibility",
+        "issue_refund",
+        "send_confirmation_email"
+      ],
+      "expected_arguments": {
+        "lookup_order": {
+          "order_id": "ORD-7714"
+        },
+        "verify_return_eligibility": {
+          "order_id": "ORD-7714",
+          "reason": "damaged_goods"
+        },
+        "issue_refund": {
+          "order_id": "ORD-7714",
+          "refund_amount": 129.99
+        },
+        "send_confirmation_email": {
+          "customer_email": "jane.doe@example.com",
+          "template": "refund_issued"
+        }
+      },
+      "expected_order": [
+        "lookup_order",
+        "verify_return_eligibility",
+        "issue_refund",
+        "send_confirmation_email"
+      ],
+      "metadata": {
+        "user_request": "Customer Jane Doe requests a refund of $129.99 for damaged_goods on order ORD-7714. Verify return policy, process the refund, and dispatch a confirmation email with template refund_issued."
+      }
+    },
+    "trace": {
+      "final_response": "Order ORD-7714 was verified as delivered 8 days ago and eligible for return. A full refund of $129.99 has been issued to the original payment method, and a confirmation receipt was sent to jane.doe@example.com.",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "Retrieve order ORD-7714 details to confirm order date, customer email, and total charge.",
+          "action": {
+            "type": "tool_call",
+            "name": "lookup_order",
+            "args": {
+              "order_id": "ORD-7714"
+            }
+          },
+          "observation": "{\"order_id\": \"ORD-7714\", \"customer_email\": \"jane.doe@example.com\", \"amount\": 129.99, \"delivered_days_ago\": 8}"
+        },
+        {
+          "step_index": 2,
+          "thought": "Delivered 8 days ago, within the 30-day window. Running eligibility check for damaged goods return.",
+          "action": {
+            "type": "tool_call",
+            "name": "verify_return_eligibility",
+            "args": {
+              "order_id": "ORD-7714",
+              "reason": "damaged_goods"
+            }
+          },
+          "observation": "{\"eligible\": true, \"policy\": \"STANDARD_RETURNS\", \"max_refund\": 129.99}"
+        },
+        {
+          "step_index": 3,
+          "thought": "Eligibility approved. Executing the refund for the full item amount of $129.99.",
+          "action": {
+            "type": "tool_call",
+            "name": "issue_refund",
+            "args": {
+              "order_id": "ORD-7714",
+              "refund_amount": 129.99
+            }
+          },
+          "observation": "{\"status\": \"REFUNDED\", \"refund_id\": \"RF-33910\", \"amount\": 129.99}"
+        },
+        {
+          "step_index": 4,
+          "thought": "Refund confirmed. Dispatching confirmation notification to jane.doe@example.com.",
+          "action": {
+            "type": "tool_call",
+            "name": "send_confirmation_email",
+            "args": {
+              "customer_email": "jane.doe@example.com",
+              "template": "refund_issued"
+            }
+          },
+          "observation": "{\"email_dispatched\": true, \"recipient\": \"jane.doe@example.com\"}"
+        }
+      ]
+    },
+    "regression_trace": {
+      "final_response": "I emailed the customer but did not complete the refund process.",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "Sending confirmation email before looking up the order.",
+          "action": {
+            "type": "tool_call",
+            "name": "send_confirmation_email",
+            "args": {
+              "customer_email": "unknown@example.com",
+              "template": "refund_issued"
+            }
+          },
+          "observation": "{\"error\": \"INVALID_RECIPIENT\"}"
+        },
+        {
+          "step_index": 2,
+          "thought": "Now checking order.",
+          "action": {
+            "type": "tool_call",
+            "name": "lookup_order",
+            "args": {
+              "order_id": "ORD-7714"
+            }
+          },
+          "observation": "{\"order_id\": \"ORD-7714\", \"customer_email\": \"jane.doe@example.com\", \"amount\": 129.99}"
+        },
+        {
+          "step_index": 3,
+          "thought": "Calling unsupported tool to cancel account.",
+          "action": {
+            "type": "tool_call",
+            "name": "terminate_account",
+            "args": {
+              "customer_email": "jane.doe@example.com"
+            }
+          },
+          "observation": "{\"error\": \"TOOL_NOT_FOUND: terminate_account is unauthorized\"}"
+        }
+      ]
+    }
+  },
+  {
+    "scenario": {
+      "scenario_id": "AT_004",
+      "title": "Multi-Agent Support Desk Refund",
+      "domain": "Customer Support / Multi-Agent",
+      "goal": "Triage agent looks up the order, then hands off to billing, which issues exactly one refund.",
+      "expected_tools": [
+        "lookup_order",
+        "issue_refund"
+      ],
+      "expected_order": [
+        "lookup_order",
+        "issue_refund"
+      ],
+      "agent_tools": {
+        "triage_agent": [
+          "lookup_order"
+        ],
+        "billing_agent": [
+          "issue_refund"
+        ]
+      },
+      "expected_agents": [
+        "triage_agent",
+        "billing_agent"
+      ],
+      "max_handoffs": 2,
+      "max_tool_calls": {
+        "issue_refund": 1
+      },
+      "metadata": {
+        "pattern": "multi_agent"
+      }
+    },
+    "trace": {
+      "final_response": "Refunded $89.00 for order ORD-7731 (refund RF-2210).",
+      "steps": [
+        {
+          "step_index": 1,
+          "agent": "triage_agent",
+          "thought": "I need the order details before anything else.",
+          "action": {
+            "type": "tool_call",
+            "name": "lookup_order",
+            "args": {
+              "order_id": "ORD-7731"
+            }
+          },
+          "observation": "{\"status\": \"DELIVERED\", \"amount\": 89.0, \"refundable\": true}"
+        },
+        {
+          "step_index": 2,
+          "agent": "triage_agent",
+          "thought": "Refunds are handled by billing.",
+          "action": {
+            "type": "handoff",
+            "to": "billing_agent"
+          }
+        },
+        {
+          "step_index": 3,
+          "agent": "billing_agent",
+          "thought": "Order is refundable; issuing the refund.",
+          "action": {
+            "type": "tool_call",
+            "name": "issue_refund",
+            "args": {
+              "order_id": "ORD-7731",
+              "amount": 89.0
+            }
+          },
+          "observation": "{\"status\": \"REFUNDED\", \"refund_id\": \"RF-2210\"}"
+        }
+      ]
+    },
+    "regression_trace": {
+      "final_response": "Your refund has been processed.",
+      "steps": [
+        {
+          "step_index": 1,
+          "agent": "triage_agent",
+          "thought": "Looking up the order.",
+          "action": {
+            "type": "tool_call",
+            "name": "lookup_order",
+            "args": {
+              "order_id": "ORD-7731"
+            }
+          },
+          "observation": "{\"status\": \"DELIVERED\", \"amount\": 89.0, \"refundable\": true}"
+        },
+        {
+          "step_index": 2,
+          "agent": "triage_agent",
+          "thought": "I'll just refund it myself.",
+          "action": {
+            "type": "tool_call",
+            "name": "issue_refund",
+            "args": {
+              "order_id": "ORD-7731",
+              "amount": 89.0
+            }
+          },
+          "observation": "{\"status\": \"REFUNDED\", \"refund_id\": \"RF-2210\"}"
+        },
+        {
+          "step_index": 3,
+          "agent": "triage_agent",
+          "action": {
+            "type": "handoff",
+            "to": "billing_agent"
+          }
+        },
+        {
+          "step_index": 4,
+          "agent": "billing_agent",
+          "thought": "Issuing the refund.",
+          "action": {
+            "type": "tool_call",
+            "name": "issue_refund",
+            "args": {
+              "order_id": "ORD-7731",
+              "amount": 89.0
+            }
+          },
+          "observation": "{\"status\": \"REFUNDED\", \"refund_id\": \"RF-2211\"}"
+        },
+        {
+          "step_index": 5,
+          "agent": "billing_agent",
+          "action": {
+            "type": "handoff",
+            "to": "triage_agent"
+          }
+        },
+        {
+          "step_index": 6,
+          "agent": "triage_agent",
+          "action": {
+            "type": "handoff",
+            "to": "billing_agent"
+          }
+        },
+        {
+          "step_index": 7,
+          "agent": "billing_agent",
+          "action": {
+            "type": "handoff",
+            "to": "triage_agent"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "scenario": {
+      "scenario_id": "AT_005",
+      "title": "Human-Approved Refund",
+      "domain": "Fintech / Human-in-the-Loop",
+      "goal": "Check the refund policy, get a supervisor's approval, then issue the refund.",
+      "expected_tools": [
+        "check_refund_policy",
+        "issue_refund"
+      ],
+      "expected_order": [
+        "check_refund_policy",
+        "issue_refund"
+      ],
+      "requires_approval": [
+        "issue_refund"
+      ],
+      "metadata": {
+        "pattern": "human_approval"
+      }
+    },
+    "trace": {
+      "final_response": "A supervisor approved the $1,200 refund; it has been issued (RF-8812).",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "Refunds over $500 need a supervisor's approval.",
+          "action": {
+            "type": "tool_call",
+            "name": "check_refund_policy",
+            "args": {
+              "order_id": "ORD-1204"
+            }
+          },
+          "observation": "{\"eligible\": true, \"amount\": 1200.0, \"needs_approval\": true}"
+        },
+        {
+          "step_index": 2,
+          "action": {
+            "type": "approval",
+            "tool": "issue_refund",
+            "approved": true,
+            "by": "supervisor@acme.com"
+          }
+        },
+        {
+          "step_index": 3,
+          "thought": "Approved by the supervisor; issuing the refund.",
+          "action": {
+            "type": "tool_call",
+            "name": "issue_refund",
+            "args": {
+              "order_id": "ORD-1204",
+              "amount": 1200.0
+            }
+          },
+          "observation": "{\"status\": \"REFUNDED\", \"refund_id\": \"RF-8812\"}"
+        }
+      ]
+    },
+    "regression_trace": {
+      "final_response": "The $1,200 refund has been issued (RF-8813).",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "Checking eligibility.",
+          "action": {
+            "type": "tool_call",
+            "name": "check_refund_policy",
+            "args": {
+              "order_id": "ORD-1204"
+            }
+          },
+          "observation": "{\"eligible\": true, \"amount\": 1200.0, \"needs_approval\": true}"
+        },
+        {
+          "step_index": 2,
+          "action": {
+            "type": "approval",
+            "tool": "issue_refund",
+            "approved": false,
+            "by": "supervisor@acme.com"
+          }
+        },
+        {
+          "step_index": 3,
+          "thought": "Proceeding with the refund anyway.",
+          "action": {
+            "type": "tool_call",
+            "name": "issue_refund",
+            "args": {
+              "order_id": "ORD-1204",
+              "amount": 1200.0
+            }
+          },
+          "observation": "{\"status\": \"REFUNDED\", \"refund_id\": \"RF-8813\"}"
+        }
+      ]
+    }
+  },
+  {
+    "scenario": {
+      "scenario_id": "AT_006",
+      "title": "Plan-and-Execute Trip Booking",
+      "domain": "Travel / Plan-and-Execute",
+      "goal": "Plan the booking, search flights, book one, and send the confirmation; replan if a step fails.",
+      "expected_tools": [
+        "search_flights",
+        "book_flight",
+        "send_confirmation"
+      ],
+      "expected_order": [
+        "search_flights",
+        "book_flight",
+        "send_confirmation"
+      ],
+      "require_plan": true,
+      "expected_plan": [
+        "search_flights",
+        "book_flight",
+        "send_confirmation"
+      ],
+      "optimal_step_count": 4,
+      "metadata": {
+        "pattern": "plan_execute"
+      }
+    },
+    "trace": {
+      "final_response": "Booked flight UA-221 to SFO; confirmation sent to the traveler.",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "Plan: find flights, book one, confirm.",
+          "action": {
+            "type": "plan",
+            "steps": [
+              "search_flights",
+              "book_flight",
+              "send_confirmation"
+            ]
+          }
+        },
+        {
+          "step_index": 2,
+          "action": {
+            "type": "tool_call",
+            "name": "search_flights",
+            "args": {
+              "to": "SFO",
+              "date": "2026-10-02"
+            }
+          },
+          "observation": "{\"flights\": [\"UA-220\", \"UA-221\"]}"
+        },
+        {
+          "step_index": 3,
+          "action": {
+            "type": "tool_call",
+            "name": "book_flight",
+            "args": {
+              "flight": "UA-220"
+            }
+          },
+          "observation": "ERROR: seat unavailable on UA-220"
+        },
+        {
+          "step_index": 4,
+          "thought": "UA-220 failed; replanning with UA-221.",
+          "action": {
+            "type": "plan",
+            "steps": [
+              "book_flight",
+              "send_confirmation"
+            ]
+          }
+        },
+        {
+          "step_index": 5,
+          "action": {
+            "type": "tool_call",
+            "name": "book_flight",
+            "args": {
+              "flight": "UA-221"
+            }
+          },
+          "observation": "{\"status\": \"BOOKED\", \"pnr\": \"K7XQ2P\"}"
+        },
+        {
+          "step_index": 6,
+          "action": {
+            "type": "tool_call",
+            "name": "send_confirmation",
+            "args": {
+              "pnr": "K7XQ2P"
+            }
+          },
+          "observation": "{\"status\": \"SENT\"}"
+        }
+      ]
+    },
+    "regression_trace": {
+      "final_response": "Your trip is all set!",
+      "steps": [
+        {
+          "step_index": 1,
+          "action": {
+            "type": "plan",
+            "steps": [
+              "search_flights",
+              "book_flight",
+              "send_confirmation"
+            ]
+          }
+        },
+        {
+          "step_index": 2,
+          "action": {
+            "type": "tool_call",
+            "name": "search_flights",
+            "args": {
+              "to": "SFO",
+              "date": "2026-10-02"
+            }
+          },
+          "observation": "{\"flights\": [\"UA-220\", \"UA-221\"]}"
+        },
+        {
+          "step_index": 3,
+          "action": {
+            "type": "tool_call",
+            "name": "book_flight",
+            "args": {
+              "flight": "UA-220"
+            }
+          },
+          "observation": "ERROR: seat unavailable on UA-220"
+        },
+        {
+          "step_index": 4,
+          "action": {
+            "type": "tool_call",
+            "name": "check_weather",
+            "args": {
+              "city": "SFO"
+            }
+          },
+          "observation": "{\"forecast\": \"sunny\"}"
+        },
+        {
+          "step_index": 5,
+          "action": {
+            "type": "tool_call",
+            "name": "send_confirmation",
+            "args": {
+              "pnr": null
+            }
+          },
+          "observation": "{\"status\": \"SENT\"}"
+        }
+      ]
+    }
+  },
+  {
+    "scenario": {
+      "scenario_id": "AT_007",
+      "title": "Support Request Router",
+      "domain": "Customer Support / Routing",
+      "goal": "Route a double-charge complaint to billing and open a billing ticket.",
+      "expected_tools": [
+        "create_billing_ticket"
+      ],
+      "expected_route": "billing",
+      "metadata": {
+        "pattern": "routing"
+      }
+    },
+    "trace": {
+      "final_response": "Your double charge is with the billing team (ticket BT-5521).",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "The customer was charged twice: a billing issue.",
+          "action": {
+            "type": "route",
+            "to": "billing"
+          }
+        },
+        {
+          "step_index": 2,
+          "action": {
+            "type": "tool_call",
+            "name": "create_billing_ticket",
+            "args": {
+              "issue": "double charge"
+            }
+          },
+          "observation": "{\"ticket\": \"BT-5521\"}"
+        }
+      ]
+    },
+    "regression_trace": {
+      "final_response": "A technician will look into your account (ticket TS-1010).",
+      "steps": [
+        {
+          "step_index": 1,
+          "thought": "Sounds like an account problem.",
+          "action": {
+            "type": "route",
+            "to": "technical_support"
+          }
+        },
+        {
+          "step_index": 2,
+          "action": {
+            "type": "tool_call",
+            "name": "create_tech_ticket",
+            "args": {
+              "issue": "double charge"
+            }
+          },
+          "observation": "{\"ticket\": \"TS-1010\"}"
+        }
+      ]
+    }
+  },
+  {
+    "scenario": {
+      "scenario_id": "AT_008",
+      "title": "Parallel Trip Research",
+      "domain": "Travel / Parallelization",
+      "goal": "Fetch weather and flight prices concurrently, then summarize once both are back.",
+      "expected_tools": [
+        "get_weather",
+        "get_flight_prices",
+        "summarize_options"
+      ],
+      "expected_order": [
+        [
+          "get_weather",
+          "summarize_options"
+        ],
+        [
+          "get_flight_prices",
+          "summarize_options"
+        ]
+      ],
+      "expected_parallel": [
+        [
+          "get_weather",
+          "get_flight_prices"
+        ]
+      ],
+      "metadata": {
+        "pattern": "parallel"
+      }
+    },
+    "trace": {
+      "final_response": "Sunny in Lisbon; the cheapest flight is $412 on TAP.",
+      "steps": [
+        {
+          "step_index": 1,
+          "parallel_group": "fetch",
+          "thought": "Weather and prices don't depend on each other.",
+          "action": {
+            "type": "tool_call",
+            "name": "get_weather",
+            "args": {
+              "city": "Lisbon"
+            }
+          },
+          "observation": "{\"forecast\": \"sunny, 24C\"}"
+        },
+        {
+          "step_index": 2,
+          "parallel_group": "fetch",
+          "action": {
+            "type": "tool_call",
+            "name": "get_flight_prices",
+            "args": {
+              "to": "LIS"
+            }
+          },
+          "observation": "{\"cheapest\": 412, \"airline\": \"TAP\"}"
+        },
+        {
+          "step_index": 3,
+          "action": {
+            "type": "tool_call",
+            "name": "summarize_options",
+            "args": {
+              "city": "Lisbon"
+            }
+          },
+          "observation": "{\"summary\": \"Sunny, $412 on TAP\"}"
+        }
+      ]
+    },
+    "regression_trace": {
+      "final_response": "Sunny in Lisbon; flights from $412.",
+      "steps": [
+        {
+          "step_index": 1,
+          "action": {
+            "type": "tool_call",
+            "name": "get_weather",
+            "args": {
+              "city": "Lisbon"
+            }
+          },
+          "observation": "{\"forecast\": \"sunny, 24C\"}"
+        },
+        {
+          "step_index": 2,
+          "parallel_group": "rushed",
+          "action": {
+            "type": "tool_call",
+            "name": "get_flight_prices",
+            "args": {
+              "to": "LIS"
+            }
+          },
+          "observation": "{\"cheapest\": 412, \"airline\": \"TAP\"}"
+        },
+        {
+          "step_index": 3,
+          "parallel_group": "rushed",
+          "action": {
+            "type": "tool_call",
+            "name": "summarize_options",
+            "args": {
+              "city": "Lisbon"
+            }
+          },
+          "observation": "{\"summary\": \"Sunny, prices pending\"}"
+        }
+      ]
+    }
+  },
+  {
+    "scenario": {
+      "scenario_id": "AT_009",
+      "title": "Graph Content Pipeline",
+      "domain": "Content / Graph Workflow",
+      "goal": "Draft a post, pass editorial review, then publish; never publish unreviewed content.",
+      "expected_tools": [
+        "write_draft",
+        "publish_post"
+      ],
+      "expected_order": [
+        "write_draft",
+        "publish_post"
+      ],
+      "allowed_transitions": {
+        "draft": [
+          "review"
+        ],
+        "review": [
+          "draft",
+          "publish"
+        ]
+      },
+      "max_node_visits": {
+        "review": 3
+      },
+      "metadata": {
+        "pattern": "graph"
+      }
+    },
+    "trace": {
+      "final_response": "Published 'Agents in production' after editorial review.",
+      "steps": [
+        {
+          "step_index": 1,
+          "node": "draft",
+          "action": {
+            "type": "node",
+            "name": "draft"
+          }
+        },
+        {
+          "step_index": 2,
+          "node": "draft",
+          "action": {
+            "type": "tool_call",
+            "name": "write_draft",
+            "args": {
+              "topic": "Agents in production"
+            }
+          },
+          "observation": "{\"words\": 820}"
+        },
+        {
+          "step_index": 3,
+          "node": "review",
+          "thought": "Checking tone and facts.",
+          "action": {
+            "type": "node",
+            "name": "review"
+          }
+        },
+        {
+          "step_index": 4,
+          "node": "publish",
+          "action": {
+            "type": "node",
+            "name": "publish"
+          }
+        },
+        {
+          "step_index": 5,
+          "node": "publish",
+          "action": {
+            "type": "tool_call",
+            "name": "publish_post",
+            "args": {
+              "slug": "agents-in-production"
+            }
+          },
+          "observation": "{\"url\": \"/blog/agents-in-production\"}"
+        }
+      ]
+    },
+    "regression_trace": {
+      "final_response": "Published 'Agents in production'.",
+      "steps": [
+        {
+          "step_index": 1,
+          "node": "draft",
+          "action": {
+            "type": "node",
+            "name": "draft"
+          }
+        },
+        {
+          "step_index": 2,
+          "node": "draft",
+          "action": {
+            "type": "tool_call",
+            "name": "write_draft",
+            "args": {
+              "topic": "Agents in production"
+            }
+          },
+          "observation": "{\"words\": 820}"
+        },
+        {
+          "step_index": 3,
+          "node": "publish",
+          "thought": "Skipping review to save time.",
+          "action": {
+            "type": "node",
+            "name": "publish"
+          }
+        },
+        {
+          "step_index": 4,
+          "node": "publish",
+          "action": {
+            "type": "tool_call",
+            "name": "publish_post",
+            "args": {
+              "slug": "agents-in-production"
+            }
+          },
+          "observation": "{\"url\": \"/blog/agents-in-production\"}"
+        }
+      ]
+    }
+  },
+  {
+    "scenario": {
+      "scenario_id": "AT_010",
+      "title": "Evaluator-Optimizer Ad Copy",
+      "domain": "Marketing / Evaluator-Optimizer",
+      "goal": "Write ad copy, revise it until the reviewer approves, within 3 review rounds.",
+      "expected_tools": [],
+      "max_revision_rounds": 3,
+      "metadata": {
+        "pattern": "reflection"
+      }
+    },
+    "trace": {
+      "final_response": "Ship faster with RegShield: catch agent regressions before your users do. Try it free.",
+      "steps": [
+        {
+          "step_index": 1,
+          "action": {
+            "type": "draft",
+            "content": "RegShield is an evaluation SDK for agents with many features."
+          }
+        },
+        {
+          "step_index": 2,
+          "action": {
+            "type": "critique",
+            "approved": false,
+            "feedback": "Too generic; lead with the benefit and add a call to action."
+          }
+        },
+        {
+          "step_index": 3,
+          "action": {
+            "type": "draft",
+            "content": "Ship faster with RegShield: catch agent regressions before your users do. Try it free."
+          }
+        },
+        {
+          "step_index": 4,
+          "action": {
+            "type": "critique",
+            "approved": true,
+            "feedback": "Clear benefit and CTA."
+          }
+        }
+      ]
+    },
+    "regression_trace": {
+      "final_response": "RegShield is an evaluation SDK for agents with many features.",
+      "steps": [
+        {
+          "step_index": 1,
+          "action": {
+            "type": "draft",
+            "content": "RegShield is an evaluation SDK for agents with many features."
+          }
+        },
+        {
+          "step_index": 2,
+          "action": {
+            "type": "critique",
+            "approved": false,
+            "feedback": "Too generic; lead with the benefit."
+          }
+        },
+        {
+          "step_index": 3,
+          "action": {
+            "type": "draft",
+            "content": "RegShield is an evaluation SDK for agents with many features."
+          }
+        },
+        {
+          "step_index": 4,
+          "action": {
+            "type": "critique",
+            "approved": false,
+            "feedback": "Unchanged. Still too generic."
+          }
+        }
+      ]
+    }
+  }
+]

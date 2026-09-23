@@ -33,6 +33,7 @@ export default function RootLayout({ children }) {
             {/* Links */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '32px', fontSize: '13px', color: 'var(--text3)' }}>
               <a href="#how-it-works" style={{ transition: 'color 0.15s' }}>How it works</a>
+              <a href="/#patterns" style={{ transition: 'color 0.15s' }}>Patterns</a>
               <a href="#compare" style={{ transition: 'color 0.15s' }}>Compare</a>
               <a href="#integrate" style={{ transition: 'color 0.15s' }}>Integrate</a>
               <a href="/docs" style={{ color: 'var(--text)', fontWeight: 500 }}>Docs</a>
@@ -54,7 +55,7 @@ export default function RootLayout({ children }) {
                 boxShadow: 'var(--shadow-xs)',
               }}>
                 <span className="dot"></span>
-                v0.3.0 stable
+                v0.4.0 stable
               </div>
               <a href="#integrate" className="btn btn-primary" style={{ padding: '7px 16px', fontSize: '13px' }}>
                 Get started
@@ -83,7 +84,7 @@ export default function RootLayout({ children }) {
 
             <div style={{ display: 'flex', gap: '24px', fontSize: '13px', color: 'var(--text3)' }}>
               <a href="/docs">Documentation</a>
-              <a href="https://github.com" target="_blank" rel="noreferrer">GitHub</a>
+              <a href="https://github.com/SubodhSenpai/RegShield" target="_blank" rel="noreferrer">GitHub</a>
               <a href="https://pypi.org" target="_blank" rel="noreferrer">PyPI</a>
             </div>
           </div>

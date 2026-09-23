@@ -1,63 +1,56 @@
-"""Convenience Decorator for Agent Trajectory Tracing."""
+"""``@shield``: evaluate every run of an agent function."""
+
+from __future__ import annotations
 
 import functools
-from typing import Callable, Any, Dict, Optional
-from regression_shield.core.trajectory_evaluator import AgentTrajectoryEvaluator
-from regression_shield.models import EvaluationReport
+from collections.abc import Callable
+from typing import Any
+
+from regression_shield.core.evaluator import AgentTraceEvaluator
+from regression_shield.models import EvaluationReport, ScenarioSpec
 
 
-def evaluate_agent_trace(
-    scenario: Any,
-    api_key: Optional[str] = None,
-    model: Optional[str] = None,
-    base_url: Optional[str] = None,
-    use_llm_judge: bool = False,
-    on_violation: Optional[str] = None,
-    **evaluator_kwargs: Any,
-):
-    """Decorator to automatically evaluate any function returning a trajectory dict or list of steps.
+def shield(
+    scenario: ScenarioSpec | dict[str, Any],
+    *,
+    get_trace: Callable[[], Any] | None = None,
+    raise_on_failure: bool = False,
+    **evaluator_options: Any,
+) -> Callable[[Callable[..., Any]], Callable[..., tuple[Any, EvaluationReport]]]:
+    """Evaluate each call of the decorated function; it then returns ``(output, report)``.
+
+    The function must return a trace (a list of steps, or a dict with ``steps``),
+    or you pass ``get_trace``: a callable returning the trace, such as
+    ``recorder.get_trace`` or ``handler.get_trace``. With ``raise_on_failure``,
+    a failed evaluation raises ``EvaluationFailed``. Other keyword arguments
+    (thresholds, judge settings) go to ``AgentTraceEvaluator``.
 
     Example:
-        @evaluate_agent_trace(
-            scenario={"expected_tools": ["verify_identity", "check_balance"]},
-            model="minimax/minimax-m2.7:free"
-        )
-        def my_agent(user_input: str):
-            # run agent
-            return {"steps": [...], "final_response": "..."}
+        @shield(scenario, get_trace=recorder.get_trace, raise_on_failure=True)
+        def run_agent(task): ...
 
-        result, report = my_agent("check balance for CUST-101")
-        print("Passed:", report.passed)
+        output, report = run_agent("Deploy to staging")
     """
-    def decorator(fn: Callable):
+    evaluator = AgentTraceEvaluator(**evaluator_options)
+
+    def decorator(fn: Callable[..., Any]) -> Callable[..., tuple[Any, EvaluationReport]]:
         @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> tuple[Any, EvaluationReport]:
             output = fn(*args, **kwargs)
-            evaluator = AgentTrajectoryEvaluator(
-                api_key=api_key,
-                model=model,
-                base_url=base_url,
-                use_llm_judge=use_llm_judge,
-                **evaluator_kwargs,
-            )
-            raw_rep = evaluator.evaluate_scenario(scenario, output)
-            report = EvaluationReport(
-                scenario_id=raw_rep["scenario_id"],
-                title=raw_rep["title"],
-                domain=raw_rep["domain"],
-                status=raw_rep["status"],
-                composite_score=raw_rep["composite_score"],
-                metrics=raw_rep["metrics"],
-                failures=raw_rep["failures"],
-                details=raw_rep["details"],
-                judge_audit=raw_rep.get("judge_audit"),
-            )
-            if on_violation == "raise" and not report.passed:
-                raise RuntimeError(f"RegressionShield policy violation: {'; '.join(report.failures)}")
+            if get_trace is not None:
+                trace = get_trace()
+            elif isinstance(output, list) or (isinstance(output, dict) and "steps" in output):
+                trace = output
+            else:
+                raise TypeError(
+                    f"@shield: '{fn.__name__}' returned {type(output).__name__}, not a trace. Return a list of "
+                    "steps or a dict with 'steps', or pass get_trace= (e.g. get_trace=recorder.get_trace)."
+                )
+            report = evaluator.evaluate(scenario, trace)
+            if raise_on_failure:
+                report.raise_for_failures()
             return output, report
+
         return wrapper
+
     return decorator
-
-
-# Convenience alias for @shield
-shield = evaluate_agent_trace

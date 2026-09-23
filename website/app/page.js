@@ -5,12 +5,13 @@ import { useState } from 'react';
 // ── Trace scenarios ─────────────────────────────────────────────────────────────
 
 const SCENARIOS = [
+  // Scores and messages are real RegShield output for these traces
   {
     id: 'deploy',
     label: 'Cloud Deploy',
     pass: {
       score: 1.00,
-      metrics: { tool_selection: 1.0, argument_correctness: 1.0, ordering: 1.0, efficiency: 0.92, faithfulness: 1.0 },
+      metrics: { tool_selection: 1.0, argument_correctness: 1.0, ordering: 1.0, efficiency: 1.0, faithfulness: 1.0 },
       verdict: 'PASS',
       steps: [
         { tool: 'run_unit_tests', ok: true },
@@ -19,10 +20,10 @@ const SCENARIOS = [
       ],
     },
     fail: {
-      score: 0.80,
-      metrics: { tool_selection: 1.0, argument_correctness: 1.0, ordering: 0.0, efficiency: 0.75, faithfulness: 1.0 },
+      score: 0.75,
+      metrics: { tool_selection: 0.8, argument_correctness: 1.0, ordering: 0.0, efficiency: 1.0, faithfulness: 1.0 },
       verdict: 'FAIL',
-      violation: "Order inversion: 'deploy_production' executed before prerequisite 'run_unit_tests'",
+      violation: "Call ordering 0.00 < 1.00: 'deploy_production' (step 1) ran before its prerequisite 'run_unit_tests' (step 2)",
       steps: [
         { tool: 'deploy_production', ok: false },
         { tool: 'run_unit_tests', ok: true },
@@ -34,7 +35,7 @@ const SCENARIOS = [
     label: 'Finance Refund',
     pass: {
       score: 1.00,
-      metrics: { tool_selection: 1.0, argument_correctness: 1.0, ordering: 1.0, efficiency: 0.88, faithfulness: 1.0 },
+      metrics: { tool_selection: 1.0, argument_correctness: 1.0, ordering: 1.0, efficiency: 1.0, faithfulness: 1.0 },
       verdict: 'PASS',
       steps: [
         { tool: 'verify_user_kyc', ok: true },
@@ -43,10 +44,10 @@ const SCENARIOS = [
       ],
     },
     fail: {
-      score: 0.73,
-      metrics: { tool_selection: 0.67, argument_correctness: 0.50, ordering: 1.0, efficiency: 0.75, faithfulness: 1.0 },
+      score: 0.65,
+      metrics: { tool_selection: 0.4, argument_correctness: 1.0, ordering: 0.0, efficiency: 1.0, faithfulness: 1.0 },
       verdict: 'FAIL',
-      violation: "Tool Selection F1 (0.67) < 0.85 — 'verify_user_kyc' missing from expected_tools",
+      violation: "Policy: Step 2: called forbidden tool 'send_external_webhook'",
       steps: [
         { tool: 'execute_refund', ok: false },
         { tool: 'send_external_webhook', ok: false },
@@ -58,7 +59,7 @@ const SCENARIOS = [
     label: 'DB Migration',
     pass: {
       score: 1.00,
-      metrics: { tool_selection: 1.0, argument_correctness: 1.0, ordering: 1.0, efficiency: 0.95, faithfulness: 1.0 },
+      metrics: { tool_selection: 1.0, argument_correctness: 1.0, ordering: 1.0, efficiency: 1.0, faithfulness: 1.0 },
       verdict: 'PASS',
       steps: [
         { tool: 'inspect_active_locks', ok: true },
@@ -66,10 +67,10 @@ const SCENARIOS = [
       ],
     },
     fail: {
-      score: 0.70,
+      score: 0.85,
       metrics: { tool_selection: 1.0, argument_correctness: 1.0, ordering: 1.0, efficiency: 0.0, faithfulness: 1.0 },
       verdict: 'FAIL',
-      violation: 'Trace Efficiency (0.00) < 0.70 — Total steps: 4, Redundant calls: 3',
+      violation: 'Step efficiency 0.00 < 0.70: 4 steps for an optimal 2, 2 repeated call(s)',
       steps: [
         { tool: 'inspect_active_locks (1/3)', ok: false },
         { tool: 'inspect_active_locks (2/3)', ok: false },
@@ -82,99 +83,125 @@ const SCENARIOS = [
 
 // ── Integration snippets ─────────────────────────────────────────────────────────
 
+const PATTERNS = [
+  { name: 'Policy rules', field: 'forbidden_tools, max_tool_calls', desc: 'Never call delete_customer. Never refund twice. Hard failures, not score deductions.' },
+  { name: 'Human approval', field: 'requires_approval', desc: 'Risky tools run only after a human approves: one approval per call, never after a denial.' },
+  { name: 'Plan & execute', field: 'require_plan, expected_plan', desc: 'A plan comes first, calls stay within it, and a failed step leads to a retry or a replan.' },
+  { name: 'Multi-agent', field: 'agent_tools, expected_agents', desc: 'Each agent uses only its own tools, hands off in order, and never ping-pongs.' },
+  { name: 'Routing', field: 'expected_route', desc: 'The router picks the right destination, with accuracy reported across your test set.' },
+  { name: 'Parallel calls', field: 'expected_parallel', desc: 'Independent calls run together; dependent calls never start before their inputs exist.' },
+  { name: 'Graph workflows', field: 'allowed_transitions', desc: 'LangGraph-style agents move only along allowed edges, within cycle limits.' },
+  { name: 'Evaluator-optimizer', field: 'max_revision_rounds', desc: 'Critiques get acted on and the final output ends approved, within a round budget.' },
+];
+
 const SNIPPETS = {
   sdk: {
     label: 'Python SDK',
     lang: 'python',
     code: `from regression_shield import evaluate_trace
 
-result = evaluate_trace(
+report = evaluate_trace(
     scenario={
         "scenario_id": "deploy_gate",
         "expected_tools": ["run_unit_tests", "deploy_production"],
         "expected_order": ["run_unit_tests", "deploy_production"],
-        "optimal_step_count": 2,
+        "expected_arguments": {"deploy_production": {"env": "staging"}},
     },
     trace=[
-        {
-            "thought": "Must run tests before deploying.",
-            "action": {"type": "tool_call", "name": "run_unit_tests", "args": {}},
-            "observation": "42 tests passed."
-        },
-        {
-            "thought": "Tests clear. Deploying to staging.",
-            "action": {"type": "tool_call", "name": "deploy_production", "args": {"env": "staging"}},
-            "observation": "Deployed successfully."
-        },
-    ]
+        {"thought": "Run the tests first.",
+         "action": {"name": "run_unit_tests", "args": {}},
+         "observation": "42 passed"},
+        {"thought": "Tests pass, deploying to staging.",
+         "action": {"name": "deploy_production", "args": {"env": "staging"}},
+         "observation": "DEPLOYED"},
+    ],
 )
 
-result.print_diagnostics()      # show per-metric breakdown
-
-if not result.passed:
-    raise SystemExit(1)         # block the CI pipeline`,
+print(report.format())          # scores, pattern checks, every failure
+report.raise_for_failures()     # fail the test or CI job`,
   },
-  langchain: {
-    label: 'LangChain',
+  patterns: {
+    label: 'Agentic patterns',
     lang: 'python',
-    code: `from regression_shield.adapters.langchain import RegressionShieldCallbackHandler
-from regression_shield import evaluate_trace
+    code: `from regression_shield import TraceRecorder, evaluate_trace
 
-# 1. Capture the trace via callback — no code changes to the agent
-handler = RegressionShieldCallbackHandler()
+recorder = TraceRecorder(agent="triage_agent")
 
-agent_executor.invoke(
-    {"input": task},
-    config={"callbacks": [handler]}
-)
+@recorder.tool
+def issue_refund(order_id: str, amount: float) -> dict:
+    return {"status": "REFUNDED", "amount": amount}
 
-# 2. Evaluate the captured trace against a scenario spec
-result = evaluate_trace(
+recorder.handoff("billing_agent")
+recorder.approval("issue_refund", approved=False, by="lead@example.com")
+issue_refund("ORD-7731", 89.0)   # runs anyway, after a denial
+
+report = evaluate_trace(
     scenario={
         "scenario_id": "refund_gate",
-        "expected_tools": ["verify_user_kyc", "execute_refund"],
-        "expected_order": ["verify_user_kyc", "execute_refund"],
-        "optimal_step_count": 2,
+        "requires_approval": ["issue_refund"],
+        "agent_tools": {"billing_agent": ["issue_refund"]},
     },
-    trace=handler.get_trace()    # returns list of StepTrace dicts
+    trace=recorder,
 )
 
-print(f"Passed: {result.passed}")
-print(f"Score:  {result.composite_score:.2f}")`,
+print(report.passed)     # False
+print(report.failures)   # ["Human Approval: Step 3: 'issue_refund' ran after its approval was denied"]`,
+  },
+  langchain: {
+    label: 'LangChain / LangGraph',
+    lang: 'python',
+    code: `from langchain.agents import create_agent
+from regression_shield import RegressionShieldCallbackHandler, evaluate_trace
+
+agent = create_agent(model, tools=[verify_user_kyc, execute_refund])
+
+# Records tool calls, reasoning, the final answer, graph nodes, parallel calls,
+# sub-agents, handoffs and human approvals. No changes to the agent.
+handler = RegressionShieldCallbackHandler()
+agent.invoke({"messages": [{"role": "user", "content": "Refund order A-1"}]},
+             config={"callbacks": [handler]})
+
+report = evaluate_trace(
+    scenario={
+        "scenario_id": "refund_gate",
+        "expected_order": ["verify_user_kyc", "execute_refund"],
+        "max_tool_calls": {"execute_refund": 1},
+    },
+    trace=handler,
+)
+print(report.format())`,
   },
   smolagents: {
     label: 'smolagents',
     lang: 'python',
-    code: `from smolagents import CodeAgent, HfApiModel
-from regression_shield.adapters.smolagents import extract_smolagents_trace
-from regression_shield import evaluate_trace
+    code: `from smolagents import CodeAgent
+from regression_shield import evaluate_trace, instrument_smolagents
 
-agent = CodeAgent(tools=[...], model=HfApiModel())
-agent.run(task)
+agent = CodeAgent(tools=[get_stock_price, convert_currency], model=model)
+recorder = instrument_smolagents(agent)   # before the run
+agent.run("What is Apple's stock price in euros?")
 
-# Normalise agent.logs into standard StepTrace format
-trace = extract_smolagents_trace(agent)
-
-result = evaluate_trace(
+# Tool calls from the generated code, managed agents as handoffs
+report = evaluate_trace(
     scenario={
-        "scenario_id": "smol_gate",
-        "expected_tools": ["run_tests"],
-        "expected_order": ["run_tests"],
-        "optimal_step_count": 1,
+        "scenario_id": "stock_in_euros",
+        "expected_order": ["get_stock_price", "convert_currency"],
     },
-    trace=trace
+    trace=recorder,
 )
-
-print(result.passed)`,
+print(report.passed)`,
   },
   cli: {
     label: 'CLI',
     lang: 'bash',
-    code: `# Evaluate agent execution traces against policy scenarios in CI/CD
-regshield eval -f ./examples/sample_scenarios.json --fail-on-regression
+    code: `# Evaluate recorded traces in CI: exit code 1 if any scenario fails
+regshield eval scenarios.json
 
-# Or launch the visual observability dashboard on localhost
-regshield serve --port 8000`,
+# Ten sample scenarios, one per agentic pattern
+regshield demo
+
+# Local dashboard on http://localhost:8000
+regshield serve`,
   },
   rest: {
     label: 'REST API',
@@ -182,21 +209,13 @@ regshield serve --port 8000`,
     code: `curl -X POST http://localhost:8000/api/evaluate-trace \\
   -H "Content-Type: application/json" \\
   -d '{
-    "scenario_id":       "deploy_gate",
-    "expected_tools":    ["run_unit_tests", "deploy_production"],
-    "expected_order":    ["run_unit_tests", "deploy_production"],
-    "optimal_step_count": 2,
+    "scenario": {
+      "scenario_id": "deploy_gate",
+      "expected_order": ["run_unit_tests", "deploy_production"]
+    },
     "trace": [
-      {
-        "thought":     "Run tests first.",
-        "action":      {"type": "tool_call", "name": "run_unit_tests", "args": {}},
-        "observation": "42 tests passed."
-      },
-      {
-        "thought":     "Deploy to staging.",
-        "action":      {"type": "tool_call", "name": "deploy_production", "args": {"env": "staging"}},
-        "observation": "Deployed."
-      }
+      {"action": {"name": "run_unit_tests", "args": {}}, "observation": "42 passed"},
+      {"action": {"name": "deploy_production", "args": {"env": "staging"}}, "observation": "DEPLOYED"}
     ]
   }'`,
   },
@@ -387,6 +406,33 @@ export default function Page() {
                 </div>
                 <h3 className="h3" style={{ marginBottom: 10 }}>{title}</h3>
                 <p className="body-sm">{desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <hr className="divider" />
+
+      {/* ── Agentic patterns ── */}
+      <section id="patterns" style={{ padding: '88px 0' }}>
+        <div className="wrap">
+          <div style={{ marginBottom: 54 }}>
+            <div className="label" style={{ marginBottom: 14 }}>Agentic patterns</div>
+            <h2 className="h2" style={{ maxWidth: 560, marginBottom: 14 }}>
+              Gates for how real agents are built.
+            </h2>
+            <p className="body" style={{ maxWidth: 560 }}>
+              Plans, handoffs, approvals, routers, parallel calls, graphs and critique loops each fail in their own way. RegShield checks each one, and only when your scenario or trace uses it.
+            </p>
+          </div>
+
+          <div className="grid-4">
+            {PATTERNS.map(({ name, field, desc }) => (
+              <div key={name} className="card" style={{ padding: '22px 22px 24px' }}>
+                <h3 className="h3" style={{ fontSize: 15, marginBottom: 8 }}>{name}</h3>
+                <p className="body-sm" style={{ marginBottom: 14 }}>{desc}</p>
+                <code style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--text3)' }}>{field}</code>
               </div>
             ))}
           </div>
@@ -748,7 +794,7 @@ export default function Page() {
           </p>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 12 }}>
             <a href="/docs" className="btn btn-primary">Read the docs</a>
-            <a href="https://github.com" target="_blank" rel="noreferrer" className="btn btn-secondary">View on GitHub</a>
+            <a href="https://github.com/SubodhSenpai/RegShield" target="_blank" rel="noreferrer" className="btn btn-secondary">View on GitHub</a>
           </div>
         </div>
       </section>

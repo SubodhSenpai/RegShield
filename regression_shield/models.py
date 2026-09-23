@@ -1,99 +1,136 @@
-"""Data models and schemas for RegressionShield Agent Trajectory Evaluation."""
+"""Scenario, trace step and report models, and the report file the dashboard reads."""
 
-from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional
+from __future__ import annotations
+
+import json
+import logging
+import os
+import urllib.request
+from collections.abc import Sequence
+from dataclasses import dataclass, field, fields
+from datetime import datetime, timezone
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Where reports are saved for the dashboard, relative to the working directory
+DEFAULT_REPORT_PATH = os.path.join("reports", "latest_report.json")
 
 
 @dataclass
 class StepTrace:
-    """Represents a single step in an agent's ReAct execution chain."""
+    """One tool call in a trace. Pattern events (plans, handoffs...) are plain dicts."""
+
     step_index: int
     thought: str = ""
     action_name: str = ""
-    action_args: Dict[str, Any] = field(default_factory=dict)
+    action_args: dict[str, Any] = field(default_factory=dict)
     observation: Any = ""
+    agent: str | None = None           # which agent acted (multi-agent traces)
+    node: str | None = None            # graph node the step ran in
+    parallel_group: str | None = None  # steps sharing a group ran concurrently
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
             "step_index": self.step_index,
             "thought": self.thought,
-            "action": {
-                "type": "tool_call",
-                "name": self.action_name,
-                "args": self.action_args,
-                "arguments": self.action_args,
-            },
+            "action": {"type": "tool_call", "name": self.action_name, "args": self.action_args},
             "observation": self.observation,
         }
+        for key in ("agent", "node", "parallel_group"):
+            if getattr(self, key) is not None:
+                data[key] = getattr(self, key)
+        return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "StepTrace":
-        act = data.get("action", {})
-        name = act.get("name", "") if isinstance(act, dict) else str(act)
-        args = act.get("args") or act.get("arguments") or {} if isinstance(act, dict) else {}
+    def from_dict(cls, data: dict[str, Any]) -> StepTrace:
+        action = data.get("action") or {}
         return cls(
             step_index=data.get("step_index", 1),
             thought=data.get("thought", ""),
-            action_name=name,
-            action_args=args,
+            action_name=action.get("name", ""),
+            action_args=action.get("args") or action.get("arguments") or {},
             observation=data.get("observation", ""),
+            agent=data.get("agent"),
+            node=data.get("node"),
+            parallel_group=data.get("parallel_group"),
         )
 
 
 @dataclass
 class ScenarioSpec:
-    """Evaluation specification defining policy expectations for an agent scenario."""
-    scenario_id: str
-    title: str = ""
-    domain: str = "General"
-    expected_tools: List[str] = field(default_factory=list)
-    expected_arguments: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    expected_order: List[Any] = field(default_factory=list)
-    optimal_step_count: Optional[int] = None
+    """What the agent should do. Every rule is optional; unset rules aren't checked."""
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "scenario_id": self.scenario_id,
-            "title": self.title,
-            "domain": self.domain,
-            "expected_tools": self.expected_tools,
-            "expected_arguments": self.expected_arguments,
-            "expected_order": self.expected_order,
-            "optimal_step_count": self.optimal_step_count or len(self.expected_tools),
-        }
+    scenario_id: str = "scenario"
+    title: str = ""
+    domain: str = ""
+    goal: str = ""                     # also given to the LLM judge
+    expected_tools: list[str] = field(default_factory=list)
+    expected_arguments: dict[str, dict[str, Any]] = field(default_factory=dict)
+    expected_order: list[Any] = field(default_factory=list)
+    optimal_step_count: int | None = None
+    # Agentic pattern rules (see regression_shield/core/patterns.py)
+    forbidden_tools: list[str] = field(default_factory=list)
+    max_tool_calls: dict[str, int] = field(default_factory=dict)
+    requires_approval: list[str] = field(default_factory=list)
+    require_plan: bool = False
+    expected_plan: list[str] = field(default_factory=list)
+    agent_tools: dict[str, list[str]] = field(default_factory=dict)
+    expected_agents: list[str] = field(default_factory=list)
+    max_handoffs: int | None = None
+    expected_route: str | list[str] | None = None
+    expected_parallel: list[list[str]] = field(default_factory=list)
+    allowed_transitions: dict[str, list[str]] = field(default_factory=dict)
+    max_node_visits: int | dict[str, int] | None = None
+    max_revision_rounds: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)  # free-form, not checked
+
+    def to_dict(self) -> dict[str, Any]:
+        """The fields that are set (empty and unset rules are left out)."""
+        return {f.name: getattr(self, f.name) for f in fields(self)
+                if getattr(self, f.name) not in (None, False, "", [], {})}
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ScenarioSpec":
-        return cls(
-            scenario_id=data.get("scenario_id", "CUSTOM_SCENARIO"),
-            title=data.get("title", ""),
-            domain=data.get("domain", "General"),
-            expected_tools=data.get("expected_tools", []),
-            expected_arguments=data.get("expected_arguments", {}),
-            expected_order=data.get("expected_order", []),
-            optimal_step_count=data.get("optimal_step_count"),
-        )
+    def from_dict(cls, data: dict[str, Any]) -> ScenarioSpec:
+        # A misspelled rule would silently not be enforced, so reject unknown fields
+        names = [f.name for f in fields(cls)]
+        unknown = set(data) - set(names)
+        if unknown:
+            raise ValueError(f"Unknown scenario field(s) {sorted(unknown)}. "
+                             f"Put extra information under 'metadata'. Valid fields: {', '.join(names)}")
+        return cls(**data)
+
+
+class EvaluationFailed(AssertionError):
+    """Raised by ``EvaluationReport.raise_for_failures``. Test runners show it as a failed assertion."""
+
+    def __init__(self, report: EvaluationReport):
+        self.report = report
+        lines = "\n".join(f"  - {failure}" for failure in report.failures)
+        super().__init__(f"{report.scenario_id} failed:\n{lines}")
 
 
 @dataclass
 class EvaluationReport:
-    """Comprehensive evaluation report detailing where and why an agent failed."""
+    """The result of evaluating one trace."""
+
     scenario_id: str
-    title: str
-    domain: str
     status: str  # "PASSED" or "FAILED"
     composite_score: float
-    metrics: Dict[str, float]
-    failures: List[str]
-    details: Dict[str, Any]
-    judge_audit: Optional[Dict[str, Any]] = None
+    metrics: dict[str, float]
+    failures: list[str]
+    patterns: dict[str, Any] = field(default_factory=dict)
+    judge_audit: dict[str, Any] | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+    title: str = ""
+    domain: str = ""
 
     @property
     def passed(self) -> bool:
         return self.status == "PASSED"
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert evaluation report to a JSON-serializable dictionary."""
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-ready dict of the report."""
         return {
             "scenario_id": self.scenario_id,
             "title": self.title,
@@ -101,103 +138,97 @@ class EvaluationReport:
             "status": self.status,
             "composite_score": self.composite_score,
             "metrics": self.metrics,
+            "patterns": self.patterns,
             "failures": self.failures,
-            "details": self.details,
             "judge_audit": self.judge_audit,
+            "details": self.details,
         }
 
-    def save(self, filepath: Optional[str] = None) -> str:
-        """Persist evaluation report to disk for local dashboard ingestion.
+    def format(self) -> str:
+        """Readable summary: status, metrics, pattern checks, judge verdict and failures."""
+        name = f"{self.scenario_id}  {self.title}" if self.title else self.scenario_id
+        lines = [f"{self.status}  {name}  (composite {self.composite_score:.2f})"]
+        lines += [f"  {metric:<24s}{value:.2f}" for metric, value in self.metrics.items()]
+        if self.patterns:
+            lines.append("  pattern checks: " + ", ".join(
+                f"{p['label']} {'PASS' if p['passed'] else 'FAIL'}" for p in self.patterns.values()))
+        if self.judge_audit:
+            score = self.judge_audit.get("score")
+            score_text = f"{score:.2f}" if isinstance(score, (int, float)) else "n/a"
+            lines.append(f"  LLM judge ({self.judge_audit.get('model')}): {score_text}  {self.judge_audit.get('reasoning', '')}")
+        if self.failures:
+            lines.append("Failures:")
+            lines += [f"  - {failure}" for failure in self.failures]
+        return "\n".join(lines)
 
-        Args:
-            filepath: Target file path (defaults to reports/latest_report.json).
+    def raise_for_failures(self) -> EvaluationReport:
+        """Raise ``EvaluationFailed`` if the evaluation failed; otherwise return the report."""
+        if not self.passed:
+            raise EvaluationFailed(self)
+        return self
 
-        Returns:
-            Absolute path to the saved report file.
-        """
-        import os
-        import json
-        from datetime import datetime, timezone
+    def save(self, path: str | None = None) -> str:
+        """Add this report to the report file the dashboard reads (replacing any
+        earlier report with the same scenario_id). Returns the file's absolute path."""
+        return save_reports([self], path)
 
-        target = filepath or os.path.join(os.getcwd(), "reports", "latest_report.json")
-        reports_dir = os.path.dirname(os.path.abspath(target))
-        os.makedirs(reports_dir, exist_ok=True)
-
-        existing_data: Dict[str, Any] = {}
-        if os.path.exists(target):
-            try:
-                with open(target, "r", encoding="utf-8") as f:
-                    existing_data = json.load(f)
-            except Exception:
-                existing_data = {}
-
-        report_dict = self.to_dict()
-        b_list = existing_data.get("trace_baseline", [])
-        # Replace if same scenario_id exists, otherwise append
-        b_list = [sc for sc in b_list if sc.get("scenario_id") != self.scenario_id]
-        b_list.append(report_dict)
-
-        existing_data["trace_baseline"] = b_list
-        existing_data["trajectory_baseline"] = b_list
-        existing_data["timestamp"] = datetime.now(timezone.utc).isoformat()
-
-        with open(target, "w", encoding="utf-8") as f:
-            json.dump(existing_data, f, indent=2)
-
-        return os.path.abspath(target)
-
-    def sync_to_dashboard(self, server_url: str = "http://localhost:8000") -> bool:
-        """Send evaluation report to a running local RegressionShield dashboard server.
-
-        Args:
-            server_url: Base URL of the dashboard server.
-
-        Returns:
-            True if sync succeeded, False otherwise.
-        """
-        import json
-        import urllib.request
-
-        url = f"{server_url.rstrip('/')}/api/evaluate-trace"
-        payload = json.dumps({
-            "scenario_id": self.scenario_id,
-            "title": self.title,
-            "domain": self.domain,
-            "trace": self.details.get("steps", []),
-            "final_response": self.details.get("final_response", ""),
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            url,
-            data=payload,
+    def sync_to_dashboard(self, url: str = "http://localhost:8000") -> bool:
+        """Send this report to a running ``regshield serve`` dashboard. Returns True on success."""
+        request = urllib.request.Request(
+            f"{url.rstrip('/')}/api/reports",
+            data=json.dumps(self.to_dict(), default=str).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
-                return resp.status in (200, 201)
-        except Exception:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status == 200
+        except OSError as err:
+            logger.warning("Could not send report to the dashboard at %s: %s", url, err)
             return False
 
-    def print_diagnostics(self):
-        """Prints a human-readable diagnostic report indicating agent failure points."""
-        print(f"\n[{self.status}] Scenario {self.scenario_id}: {self.title}")
-        print(f"Composite Score: {self.composite_score:.2f}")
-        print("-" * 50)
-        for metric_name, val in self.metrics.items():
-            print(f"  * {metric_name:<24s}: {val:.2f}")
 
-        if self.judge_audit and self.judge_audit.get("reasoning"):
-            model_name = self.judge_audit.get("model", "LLM")
-            j_score = self.judge_audit.get("score", 1.0)
-            j_reason = self.judge_audit.get("reasoning", "")
-            print(f"\n[Judge Audit - {model_name}]:")
-            print(f"  Score: {j_score:.2f} | Reasoning: {j_reason}")
+def load_report_file(path: str | None = None) -> dict[str, Any]:
+    """The report file's contents, or an empty report if it doesn't exist or can't be read."""
+    target = path or DEFAULT_REPORT_PATH
+    try:
+        with open(target, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {"results": [], "regression_results": []}
 
-        if self.failures:
-            print("\n[!] Failure Diagnoses (Where your agent went wrong):")
-            for f in self.failures:
-                print(f"  -> {f}")
-        else:
-            print("\n[OK] All agentic reasoning checks passed cleanly!")
 
+def save_reports(
+    reports: Sequence[EvaluationReport | dict[str, Any]],
+    path: str | None = None,
+    *,
+    regression_reports: Sequence[EvaluationReport | dict[str, Any]] | None = None,
+    replace: bool = False,
+) -> str:
+    """Write reports to the dashboard's report file.
+
+    Reports are merged by scenario_id into what's already there, unless
+    ``replace`` is set. ``regression_reports`` are regressed variants of the same
+    scenarios, shown side by side in the dashboard. Returns the absolute path.
+    """
+    target = os.path.abspath(path or DEFAULT_REPORT_PATH)
+    data = {"results": [], "regression_results": []} if replace else load_report_file(target)
+
+    def merge(key: str, new: Sequence[EvaluationReport | dict[str, Any]]) -> None:
+        new_dicts = [r.to_dict() if isinstance(r, EvaluationReport) else r for r in new]
+        ids = {r.get("scenario_id") for r in new_dicts}
+        data[key] = [r for r in data.get(key, []) if r.get("scenario_id") not in ids] + new_dicts
+
+    merge("results", reports)
+    if regression_reports is not None:
+        merge("regression_results", regression_reports)
+    data["generated_at"] = datetime.now(timezone.utc).isoformat()
+
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, default=str)
+    logger.debug("Saved %d report(s) to %s", len(reports), target)
+    return target

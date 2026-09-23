@@ -115,6 +115,7 @@ report = evaluate_trace(
          "action": {"name": "deploy_production", "args": {"env": "staging"}},
          "observation": "DEPLOYED"},
     ],
+    min_tool_selection=0.94,    # optional: stricter than the default 0.85
 )
 
 print(report.format())          # scores, pattern checks, every failure
@@ -654,6 +655,10 @@ export default function Page() {
                   <ScoreBar label="Step Efficiency"    value={run.metrics.efficiency}     color={run.metrics.efficiency >= 0.70 ? 'var(--green-dot)' : 'var(--red-dot)'} />
                   <ScoreBar label="Reasoning Faithful" value={run.metrics.faithfulness}   color={run.metrics.faithfulness >= 0.85 ? 'var(--green-dot)' : '#f59e0b'} />
                 </div>
+                <p className="body-sm" style={{ marginTop: 12, fontSize: 12, color: 'var(--text3)' }}>
+                  Colored against the default thresholds. Every threshold is configurable, e.g.{' '}
+                  <code style={{ fontFamily: 'var(--mono)' }}>min_tool_selection=0.94</code>.
+                </p>
               </div>
             </div>
           </div>

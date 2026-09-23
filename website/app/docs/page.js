@@ -91,12 +91,25 @@ report = evaluate_trace(scenario, trace)`,
   metrics: {
     label: 'Scoring',
     title: 'Five deterministic metrics',
+    snippet: `# Every threshold can be changed. A metric below its threshold fails the scenario.
+report = evaluate_trace(
+    scenario, trace,
+    min_tool_selection=0.94,          # default 0.85
+    min_argument_correctness=0.85,
+    min_call_ordering=1.0,
+    min_step_efficiency=0.70,
+    min_reasoning_faithfulness=0.85,
+)
+
+# The same options exist on AgentTraceEvaluator, @shield and the REST API (min_* fields).
+# CLI:  regshield eval scenarios.json --min-tool-selection 0.94`,
+    lang: 'python',
     metrics: [
-      { name: 'Tool Selection F1',      weight: '25%', desc: 'Precision and recall over expected_tools: missing tools and unexpected ones both lower it. Threshold: 0.85.' },
-      { name: 'Argument Correctness',   weight: '25%', desc: 'Share of expected argument values the best-matching call used. Threshold: 0.85.' },
-      { name: 'Call Ordering',          weight: '20%', desc: 'Share of ordering constraints respected. A tool that ran before, or in parallel with, its prerequisite breaks one. Threshold: 1.00.' },
-      { name: 'Step Efficiency',        weight: '15%', desc: 'optimal / actual tool calls, minus 0.25 per repeated identical call. Catches loops and wandering. Threshold: 0.70.' },
-      { name: 'Reasoning Faithfulness', weight: '15%', desc: 'Rule-based: flags a thought or final answer claiming success right after a tool error or a denied approval. Add the LLM judge for claims rules cannot check, like a wrong amount. Threshold: 0.85.' },
+      { name: 'Tool Selection F1',      weight: '25%', desc: 'Precision and recall over expected_tools: missing tools and unexpected ones both lower it. Default threshold: 0.85.' },
+      { name: 'Argument Correctness',   weight: '25%', desc: 'Share of expected argument values the best-matching call used. Default threshold: 0.85.' },
+      { name: 'Call Ordering',          weight: '20%', desc: 'Share of ordering constraints respected. A tool that ran before, or in parallel with, its prerequisite breaks one. Default threshold: 1.00.' },
+      { name: 'Step Efficiency',        weight: '15%', desc: 'optimal / actual tool calls, minus 0.25 per repeated identical call. Catches loops and wandering. Default threshold: 0.70.' },
+      { name: 'Reasoning Faithfulness', weight: '15%', desc: 'Rule-based: flags a thought or final answer claiming success right after a tool error or a denied approval. Add the LLM judge for claims rules cannot check, like a wrong amount. Default threshold: 0.85.' },
     ],
   },
   patterns: {

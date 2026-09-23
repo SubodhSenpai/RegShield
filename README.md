@@ -88,6 +88,18 @@ Each trace is scored on five metrics. A metric below its threshold, or any faili
 | Step efficiency | 15% | No repeated calls or extra steps | 0.70 |
 | Reasoning faithfulness | 15% | No claim of success right after a failed call or a denied approval | 0.85 |
 
+Every threshold can be changed. For example, to require a tool selection F1 of 0.94 instead of 0.85:
+
+```python
+report = evaluate_trace(scenario, trace, min_tool_selection=0.94)
+```
+
+```bash
+regshield eval scenarios.json --min-tool-selection 0.94
+```
+
+The options are `min_tool_selection`, `min_argument_correctness`, `min_call_ordering`, `min_step_efficiency` and `min_reasoning_faithfulness`. They work the same way in `AgentTraceEvaluator(...)`, `@shield(...)` and the REST API. The CLI flags use dashes instead of underscores.
+
 <details>
 <summary><b>How the faithfulness check decides, and when to add the LLM judge</b></summary>
 <br>

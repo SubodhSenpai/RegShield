@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RegressionShield — Agentic AI Reasoning & Execution Trace Dashboard</title>
+  <title>RegShield Dashboard</title>
   <meta name="description" content="Evaluation and observability dashboard for Agentic AI reasoning chains, tool calling accuracy, ReAct execution traces, and policy regressions." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -267,7 +267,7 @@
     /* Executive KPI Cards */
     .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 16px;
       margin-bottom: 28px;
     }
@@ -907,6 +907,112 @@
       justify-content: center;
     }
 
+    /* Agentic pattern checks */
+    .patterns-panel {
+      margin-top: 18px;
+    }
+    .patterns-title {
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      color: var(--text-primary);
+      margin-bottom: 10px;
+    }
+    .patterns-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+    }
+    .pattern-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-left: 3px solid var(--success-dot);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      min-width: 0;
+    }
+    .pattern-card.pattern-failed {
+      border-left-color: var(--danger-dot);
+    }
+    .pattern-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .pattern-label {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .pattern-score {
+      font-family: var(--font-mono);
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin: 6px 0 2px;
+      font-variant-numeric: tabular-nums;
+    }
+    .pattern-summary {
+      font-family: var(--font-mono);
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      overflow-wrap: anywhere;
+    }
+    .pattern-violations {
+      margin-top: 8px;
+    }
+    .pattern-violations li {
+      font-size: 0.78rem;
+      overflow-wrap: anywhere;
+    }
+
+    /* Step context tags and pattern events in the trace */
+    .step-context {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+    .ctx-tag {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-xs);
+      padding: 2px 6px;
+    }
+    .ctx-parallel {
+      color: var(--accent-text);
+      background: var(--accent-subtle);
+      border-color: var(--accent-border);
+    }
+    .event-card,
+    .event-marker {
+      border-style: dashed;
+    }
+    .event-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+    .event-line .tool-call-badge {
+      margin-bottom: 0;
+    }
+    .plan-list {
+      margin: 0;
+      padding-left: 20px;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.7;
+      color: var(--text-secondary);
+    }
+
     @media (max-width: 768px) {
       .container {
         padding: 16px;
@@ -931,8 +1037,8 @@
     <header>
       <div class="brand">
         <div>
-          <h1 class="brand-title">RegressionShield</h1>
-          <div class="brand-subtitle">Agentic AI Reasoning & Trace Observability</div>
+          <h1 class="brand-title">RegShield</h1>
+          <div class="brand-subtitle">Regression tests for agent traces</div>
         </div>
       </div>
 
@@ -942,22 +1048,11 @@
           <span id="serverStatusText">Connecting...</span>
         </div>
 
-        <button id="btnRunEval" class="btn btn-primary" onclick="triggerRunEval()">
+        <button id="btnRunDemo" class="btn btn-primary" onclick="runDemo()" title="Evaluate the bundled sample scenarios">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="5 3 19 12 5 21 5 3"/>
           </svg>
-          <span id="btnRunEvalText">Run Live Trace Eval</span>
-        </button>
-
-        <button id="btnRunSmol" class="btn btn-secondary" onclick="triggerRunSmolagents()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="11" width="18" height="10" rx="2"/>
-            <circle cx="12" cy="5" r="2"/>
-            <path d="M12 7v4"/>
-            <line x1="8" y1="16" x2="8" y2="16"/>
-            <line x1="16" y1="16" x2="16" y2="16"/>
-          </svg>
-          <span id="btnRunSmolText">smolagents Audit</span>
+          <span id="btnRunDemoText">Run demo</span>
         </button>
 
         <button id="btnRefresh" class="btn btn-ghost" onclick="fetchLatestReport(true)" title="Refresh data from server">
@@ -973,16 +1068,12 @@
     <!-- Meta Status Bar -->
     <div class="meta-bar">
       <div class="meta-item">
-        <span>Active Judge:</span>
-        <strong id="metaJudgeModel">minimax/minimax-m2.7:free</strong>
+        <span>LLM judge:</span>
+        <strong id="metaJudge">off</strong>
       </div>
       <div class="meta-item">
-        <span>Report Timestamp:</span>
-        <strong id="metaTimestamp">Checking...</strong>
-      </div>
-      <div class="meta-item">
-        <span>Evaluation Mode:</span>
-        <strong id="metaMode">Live Multi-Step Reasoning</strong>
+        <span>Report generated:</span>
+        <strong id="metaTimestamp">no report yet</strong>
       </div>
       <div class="meta-item">
         <span>Auto-Refresh:</span>
@@ -1014,7 +1105,7 @@
 
       <div class="kpi-card">
         <div class="kpi-header">
-          <span class="kpi-title">Regression Pass Rate</span>
+          <span class="kpi-title">Regressions Caught</span>
           <span class="kpi-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
@@ -1023,8 +1114,8 @@
             </svg>
           </span>
         </div>
-        <div id="kpiRegressionPass" class="kpi-value">--</div>
-        <div class="kpi-sub">Detected policy violations</div>
+        <div id="kpiRegressionsCaught" class="kpi-value">--</div>
+        <div class="kpi-sub">Known-bad traces that failed</div>
       </div>
 
       <div class="kpi-card">
@@ -1067,6 +1158,22 @@
         <div id="kpiFaithfulness" class="kpi-value">--</div>
         <div class="kpi-sub">Thought-observation grounding</div>
       </div>
+
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-title">Pattern Checks</span>
+          <span class="kpi-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="6" cy="6" r="3"/>
+              <circle cx="18" cy="18" r="3"/>
+              <circle cx="18" cy="6" r="3"/>
+              <path d="M9 6h6M18 9v6M8.1 8.1l7.8 7.8"/>
+            </svg>
+          </span>
+        </div>
+        <div id="kpiPatterns" class="kpi-value">--</div>
+        <div class="kpi-sub">Agentic pattern rules passed (baseline)</div>
+      </div>
     </div>
 
     <!-- Tab Navigation -->
@@ -1076,7 +1183,7 @@
           <circle cx="11" cy="11" r="8"/>
           <line x1="21" y1="21" x2="16.65" y2="16.65"/>
         </svg>
-        ReAct Step Trace Inspector
+        Trace Inspector
       </button>
       <button class="tab-btn" onclick="switchTab('tab-matrix')">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1086,15 +1193,7 @@
           <line x1="9" y1="3" x2="9" y2="21"/>
           <line x1="15" y1="3" x2="15" y2="21"/>
         </svg>
-        Baseline vs. Regression Delta Matrix
-      </button>
-      <button class="tab-btn" onclick="switchTab('tab-smolagents')">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="11" width="18" height="10" rx="2"/>
-          <circle cx="12" cy="5" r="2"/>
-          <path d="M12 7v4"/>
-        </svg>
-        smolagents Audit
+        Baseline vs. Regression
       </button>
       <button class="tab-btn" onclick="switchTab('tab-json')">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1107,7 +1206,7 @@
       </button>
     </div>
 
-    <!-- TAB 1: ReAct Step Trace Inspector -->
+    <!-- TAB 1: Trace Inspector -->
     <div id="tab-inspector" class="tab-pane active">
       <div class="inspector-header">
         <div class="scenario-selector" id="scenarioPills">
@@ -1119,14 +1218,14 @@
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="20 6 9 17 4 12"/>
             </svg>
-            Baseline Trace
+            Baseline
           </button>
           <button id="toggleRegression" class="mode-toggle-btn regression" onclick="setTraceMode('regression')">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"/>
               <line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
-            Regressed Trace
+            Regression
           </button>
         </div>
       </div>
@@ -1136,22 +1235,22 @@
       </div>
     </div>
 
-    <!-- TAB 2: Delta Matrix -->
+    <!-- TAB 2: Baseline vs. regression -->
     <div id="tab-matrix" class="tab-pane">
       <div class="table-container">
         <table class="matrix-table" id="matrixTable">
           <thead>
             <tr>
-              <th>Scenario ID</th>
-              <th>Domain / Task</th>
-              <th>Baseline Composite</th>
-              <th>Regression Composite</th>
-              <th>Composite Delta</th>
+              <th>Scenario</th>
+              <th>Task</th>
+              <th>Baseline</th>
+              <th>Regression</th>
+              <th>Composite Δ</th>
               <th>Tool Selection Δ</th>
               <th>Args Δ</th>
               <th>Order Δ</th>
               <th>Efficiency Δ</th>
-              <th>Status</th>
+              <th>Regression</th>
             </tr>
           </thead>
           <tbody id="matrixTableBody">
@@ -1161,14 +1260,7 @@
       </div>
     </div>
 
-    <!-- TAB 3: smolagents Live Audit -->
-    <div id="tab-smolagents" class="tab-pane">
-      <div id="smolagentsContainer">
-        <!-- Populated by renderSmolagents() -->
-      </div>
-    </div>
-
-    <!-- TAB 4: Raw JSON -->
+    <!-- TAB 3: Raw JSON -->
     <div id="tab-json" class="tab-pane">
       <div style="display: flex; justify-content: flex-end; margin-bottom: 12px;">
         <button class="btn btn-secondary" onclick="copyRawJson()">
@@ -1246,9 +1338,8 @@
           document.getElementById("serverBadge").className = "server-badge";
           const currentPort = data.port || window.location.port || "8000";
           document.getElementById("serverStatusText").textContent = `Connected (Port ${currentPort})`;
-          if (data.judge_model) {
-            document.getElementById("metaJudgeModel").textContent = data.judge_model;
-          }
+          const judge = data.llm_judge || {};
+          document.getElementById("metaJudge").textContent = judge.enabled ? `on (${judge.model})` : "off";
         } else {
           throw new Error("Bad status response");
         }
@@ -1270,8 +1361,8 @@
           }
         }
         
-        // Fallback for file:// or offline
-        if (!data) {
+        // Fallback for file:// only (the server doesn't serve files from disk)
+        if (!data && !window.location.protocol.startsWith("http")) {
           const fallbackRes = await fetch("reports/latest_report.json", { cache: "no-store" });
           if (fallbackRes.ok) {
             data = await fallbackRes.json();
@@ -1288,61 +1379,30 @@
       }
     }
 
-    // Trigger live evaluation
-    async function triggerRunEval() {
-      const btn = document.getElementById("btnRunEval");
-      const btnText = document.getElementById("btnRunEvalText");
+    // Evaluate the bundled sample scenarios on the server
+    async function runDemo() {
+      const btn = document.getElementById("btnRunDemo");
+      const btnText = document.getElementById("btnRunDemoText");
       btn.disabled = true;
-      btnText.innerHTML = `<div class="spinner"></div> Running Eval...`;
-      showToast("Running evaluation...", "info");
-
+      btnText.innerHTML = `<div class="spinner"></div> Running...`;
       try {
-        const res = await fetch("/api/run-eval", {
+        const res = await fetch("/api/run-demo", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ live: true })
+          body: "{}"
         });
         const result = await res.json();
         if (res.ok) {
-          showToast(result.message || "Evaluation complete", "success");
+          showToast(`Evaluated ${result.evaluated} sample scenarios (${result.passed} passed)`, "success");
           await fetchLatestReport();
         } else {
-          showToast(result.error || result.message || "Evaluation failed", "error");
+          showToast(result.error || "Demo failed", "error");
         }
       } catch (err) {
-        showToast("Error triggering eval: " + err.message, "error");
+        showToast("Could not run the demo: " + err.message, "error");
       } finally {
         btn.disabled = false;
-        btnText.textContent = "Run Live Trace Eval";
-      }
-    }
-
-    // Trigger smolagents audit
-    async function triggerRunSmolagents() {
-      const btn = document.getElementById("btnRunSmol");
-      const btnText = document.getElementById("btnRunSmolText");
-      btn.disabled = true;
-      btnText.innerHTML = `<div class="spinner"></div> Auditing...`;
-      showToast("Auditing smolagents reasoning chain...", "info");
-
-      try {
-        const res = await fetch("/api/run-smolagents", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ live: true })
-        });
-        const result = await res.json();
-        if (res.ok) {
-          showToast("smolagents audit completed", "success");
-          await fetchLatestReport();
-        } else {
-          showToast(result.error || "smolagents audit requires local Python execution", "error");
-        }
-      } catch (err) {
-        showToast("Error executing audit: " + err.message, "error");
-      } finally {
-        btn.disabled = false;
-        btnText.textContent = "smolagents Audit";
+        btnText.textContent = "Run demo";
       }
     }
 
@@ -1351,17 +1411,13 @@
       if (!reportData) return;
 
       // Meta bar
-      if (reportData.timestamp) {
-        const date = new Date(reportData.timestamp);
+      if (reportData.generated_at) {
+        const date = new Date(reportData.generated_at);
         document.getElementById("metaTimestamp").textContent = date.toLocaleTimeString() + " (" + date.toLocaleDateString() + ")";
       }
-      if (reportData.config && reportData.config.judge_model) {
-        document.getElementById("metaJudgeModel").textContent = reportData.config.judge_model;
-      }
 
-      // Compute KPIs with neutral typography
-      const bList = reportData.trace_baseline || reportData.trajectory_baseline || [];
-      const rList = reportData.trace_regression || reportData.trajectory_regression || [];
+      const bList = reportData.results || [];
+      const rList = reportData.regression_results || [];
 
       if (bList.length > 0) {
         const bPassed = bList.filter(s => s.status === "PASSED").length;
@@ -1375,14 +1431,17 @@
 
         const avgFaith = bList.reduce((acc, s) => acc + (s.metrics?.reasoning_faithfulness || 0), 0) / bList.length;
         document.getElementById("kpiFaithfulness").textContent = `${Math.round(avgFaith * 100)}%`;
+
+        const patternResults = bList.flatMap(s => Object.values(s.patterns || {}));
+        document.getElementById("kpiPatterns").textContent = patternResults.length
+          ? `${patternResults.filter(p => p.passed).length}/${patternResults.length}`
+          : "--";
       }
 
-      if (rList.length > 0) {
-        const rPassed = rList.filter(s => s.status === "PASSED").length;
-        document.getElementById("kpiRegressionPass").textContent = `${Math.round((rPassed / rList.length) * 100)}%`;
-      } else {
-        document.getElementById("kpiRegressionPass").textContent = "0%";
-      }
+      // A regression is caught when its known-bad trace fails
+      document.getElementById("kpiRegressionsCaught").textContent = rList.length
+        ? `${rList.filter(s => s.status === "FAILED").length}/${rList.length}`
+        : "--";
 
       // Populate scenario selector pills
       renderScenarioPills();
@@ -1390,11 +1449,7 @@
       // Render Active Scenario Trace
       renderScenarioTrace();
 
-      // Render Matrix
-      renderDeltaMatrix();
-
-      // Render smolagents
-      renderSmolagents();
+      renderComparison();
 
       // Raw JSON
       document.getElementById("rawJsonCode").textContent = JSON.stringify(reportData, null, 2);
@@ -1404,7 +1459,7 @@
     function renderScenarioPills() {
       const container = document.getElementById("scenarioPills");
       container.innerHTML = "";
-      const bList = reportData.trace_baseline || reportData.trajectory_baseline || [];
+      const bList = reportData.results || [];
 
       if (bList.length > 0 && !bList.some(s => s.scenario_id === selectedScenarioId)) {
         selectedScenarioId = bList[0].scenario_id;
@@ -1424,12 +1479,101 @@
       });
     }
 
-    // Render ReAct Trace for selected scenario & mode
+    const EVENT_TITLES = {
+      plan: "Plan",
+      handoff: "Agent Handoff",
+      approval: "Human Approval",
+      route: "Routing Decision",
+      node: "Graph Node",
+      draft: "Draft",
+      critique: "Critique",
+    };
+
+    // Agent / graph node / parallel group tags for a step
+    function renderStepContext(st) {
+      const tags = [];
+      if (st.agent) tags.push(`<span class="ctx-tag" title="Agent that acted">agent: ${escapeHtml(st.agent)}</span>`);
+      if (st.node) tags.push(`<span class="ctx-tag" title="Graph node">node: ${escapeHtml(st.node)}</span>`);
+      if (st.parallel_group !== undefined && st.parallel_group !== null) {
+        tags.push(`<span class="ctx-tag ctx-parallel" title="Ran concurrently with other steps in this group">parallel: ${escapeHtml(String(st.parallel_group))}</span>`);
+      }
+      return tags.join("");
+    }
+
+    // Body of a pattern event step (plan, handoff, approval, ...)
+    function renderEventBody(act) {
+      switch (act.type) {
+        case "plan": {
+          const items = (act.steps || []).map(s => typeof s === "object" && s !== null ? (s.tool || s.name || JSON.stringify(s)) : s);
+          return `<ol class="plan-list">${items.map(i => `<li>${escapeHtml(String(i))}</li>`).join("")}</ol>`;
+        }
+        case "handoff":
+          return `<div class="event-line">Control passed to <span class="tool-call-badge">${escapeHtml(act.to || "?")}</span></div>`;
+        case "approval": {
+          const denied = act.approved === false;
+          const target = act.tool ? `for <span class="tool-call-badge">${escapeHtml(act.tool)}</span>` : "for the next guarded call";
+          return `<div class="event-line"><span class="badge ${denied ? "badge-fail" : "badge-pass"}">${denied ? "Denied" : "Approved"}</span> ${target}${act.by ? ` by ${escapeHtml(act.by)}` : ""}</div>`;
+        }
+        case "route":
+          return `<div class="event-line">Routed to <span class="tool-call-badge">${escapeHtml(act.to || "?")}</span></div>`;
+        case "node":
+          return `<div class="event-line">Entered node <span class="tool-call-badge">${escapeHtml(act.name || "?")}</span></div>`;
+        case "draft":
+          return `<pre class="code-snippet" style="white-space: pre-wrap;">${escapeHtml(act.content || "")}</pre>`;
+        case "critique":
+          return `<div class="event-line"><span class="badge ${act.approved ? "badge-pass" : "badge-fail"}">${act.approved ? "Approved" : "Rejected"}</span> ${escapeHtml(act.feedback || "")}</div>`;
+        default:
+          return `<pre class="code-snippet">${escapeHtml(JSON.stringify(act, null, 2))}</pre>`;
+      }
+    }
+
+    // One-line summary of what a pattern check saw
+    function patternSummary(p) {
+      const d = p.details || {};
+      let text = "";
+      if (d.agents && d.agents.length) text = "Agents: " + d.agents.join(" \u2192 ");
+      else if (d.path && d.path.length) text = "Path: " + d.path.map(n => [].concat(n).join(" + ")).join(" \u2192 ");
+      else if (d.route !== undefined && d.route !== null) {
+        text = "Route: " + d.route + (d.expected_route ? ` (expected ${[].concat(d.expected_route).join(" / ")})` : "");
+      }
+      else if (d.plans) text = `${d.plans.length} plan(s), ${d.replans || 0} replan(s)`;
+      else if (d.parallel_batches) {
+        text = d.parallel_batches.length ? "Concurrent: " + d.parallel_batches.map(b => b.join(" + ")).join("; ") : "No concurrent calls";
+      }
+      else if (d.guarded_tools) text = `Guarded: ${d.guarded_tools.join(", ")} \u00b7 ${d.approval_steps} approval step(s)`;
+      else if (d.critiques !== undefined) text = `${d.drafts} draft(s), ${d.critiques} review round(s)`;
+      else if (d.tool_call_counts) text = "Calls: " + Object.entries(d.tool_call_counts).map(([k, v]) => `${k} \u00d7${v}`).join(", ");
+      return text ? `<div class="pattern-summary">${escapeHtml(text)}</div>` : "";
+    }
+
+    function renderPatternsPanel(patterns) {
+      const entries = Object.values(patterns || {});
+      if (!entries.length) return "";
+      return `
+        <div class="patterns-panel">
+          <div class="patterns-title">Agentic Pattern Checks</div>
+          <div class="patterns-grid">
+            ${entries.map(p => `
+              <div class="pattern-card ${p.passed ? "" : "pattern-failed"}">
+                <div class="pattern-head">
+                  <span class="pattern-label">${escapeHtml(p.label || "")}</span>
+                  <span class="badge ${p.passed ? "badge-pass" : "badge-fail"}">${p.passed ? "Pass" : "Fail"}</span>
+                </div>
+                <div class="pattern-score">${Number(p.score || 0).toFixed(2)}</div>
+                ${patternSummary(p)}
+                ${(p.violations || []).length ? `<ul class="failures-list pattern-violations">${p.violations.map(v => `<li>${escapeHtml(v)}</li>`).join("")}</ul>` : ""}
+              </div>`).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    // Render the execution trace for the selected scenario & mode
     function renderScenarioTrace() {
       const container = document.getElementById("scenarioDetailContainer");
       const list = activeTraceMode === "baseline" 
-        ? (reportData.trace_baseline || reportData.trajectory_baseline || [])
-        : (reportData.trace_regression || reportData.trajectory_regression || []);
+        ? (reportData.results || [])
+        : (reportData.regression_results || []);
 
       const scenario = list.find(s => s.scenario_id === selectedScenarioId);
       if (!scenario) {
@@ -1457,11 +1601,34 @@
 
       let stepsHtml = "";
       if (steps.length === 0) {
-        stepsHtml = `<div class="empty-state"><p>No recorded ReAct steps in this trajectory.</p></div>`;
+        stepsHtml = `<div class="empty-state"><p>No recorded steps in this trace.</p></div>`;
       } else {
         steps.forEach((st, idx) => {
           const stepNum = st.step_index || (idx + 1);
           const act = st.action || {};
+          const eventType = act.type || "tool_call";
+
+          if (eventType !== "tool_call") {
+            stepsHtml += `
+              <div class="step-node">
+                <div class="step-marker event-marker">${stepNum}</div>
+                <div class="step-card event-card">
+                  <div class="step-header">
+                    <span class="step-title">Step ${stepNum} — ${escapeHtml(EVENT_TITLES[eventType] || eventType)}</span>
+                    <span class="step-context">${renderStepContext(st)}</span>
+                  </div>
+                  ${st.thought ? `
+                  <div class="trace-section">
+                    <div class="trace-header">Internal Thought</div>
+                    <div class="thought-content">${escapeHtml(st.thought)}</div>
+                  </div>` : ""}
+                  <div class="trace-section">${renderEventBody(act)}</div>
+                </div>
+              </div>
+            `;
+            return;
+          }
+
           const toolName = act.name || "None";
           const toolArgs = act.args || act.arguments || {};
           const thought = st.thought || "No internal thought recorded";
@@ -1472,8 +1639,8 @@
               <div class="step-marker">${stepNum}</div>
               <div class="step-card">
                 <div class="step-header">
-                  <span class="step-title">Step ${stepNum} — ReAct Execution Block</span>
-                  <span class="badge badge-domain">${escapeHtml(toolName)}</span>
+                  <span class="step-title">Step ${stepNum} — Tool Call</span>
+                  <span class="step-context">${renderStepContext(st)}<span class="badge badge-domain">${escapeHtml(toolName)}</span></span>
                 </div>
 
                 <div class="trace-section">
@@ -1594,11 +1761,13 @@
             </div>
           </div>
 
+          ${renderPatternsPanel(scenario.patterns)}
+
           ${failuresHtml}
 
           <div style="margin-top: 24px;">
             <h3 style="font-size: 0.88rem; font-weight: 700; color: var(--text-primary); margin-bottom: 14px;">
-              ReAct Execution Trace (${steps.length} Steps)
+              Execution Trace (${steps.length} Steps)
             </h3>
             <div class="step-timeline">
               ${stepsHtml}
@@ -1610,161 +1779,42 @@
       `;
     }
 
-    // Render Matrix Table
-    function renderDeltaMatrix() {
+    // Baseline vs. regression, per scenario
+    function renderComparison() {
       const tbody = document.getElementById("matrixTableBody");
-      tbody.innerHTML = "";
-      const deltas = reportData.trajectory_deltas || [];
-
-      if (deltas.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 40px; color: var(--text-muted);">No comparison deltas computed. Run evaluation in compare mode.</td></tr>`;
+      const regressions = Object.fromEntries((reportData.regression_results || []).map(r => [r.scenario_id, r]));
+      const rows = (reportData.results || []).filter(b => regressions[b.scenario_id]);
+      if (rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 40px; color: var(--text-muted);">No regression traces in this report. Add a "regression_trace" to scenario file items, or click Run demo.</td></tr>`;
         return;
       }
-
-      deltas.forEach(d => {
-        const compDeltaClass = d.composite_delta < 0 ? "neg" : (d.composite_delta > 0 ? "pos" : "neutral");
-        const toolDeltaClass = d.tool_selection_delta < 0 ? "neg" : (d.tool_selection_delta > 0 ? "pos" : "neutral");
-        const argsDeltaClass = d.argument_correctness_delta < 0 ? "neg" : (d.argument_correctness_delta > 0 ? "pos" : "neutral");
-        const ordDeltaClass = d.call_ordering_delta < 0 ? "neg" : (d.call_ordering_delta > 0 ? "pos" : "neutral");
-        const effDeltaClass = d.step_efficiency_delta < 0 ? "neg" : (d.step_efficiency_delta > 0 ? "pos" : "neutral");
-
-        const statusPill = d.is_regression 
-          ? `<span class="badge badge-fail">REGRESSION</span>`
-          : `<span class="badge badge-pass">STABLE</span>`;
-
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td><strong>${escapeHtml(d.scenario_id)}</strong></td>
-          <td>
-            <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(d.title)}</div>
-            <div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(d.domain)}</div>
-          </td>
-          <td><span style="font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums;">${d.baseline_composite.toFixed(2)}</span></td>
-          <td><span style="font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums;">${d.regression_composite.toFixed(2)}</span></td>
-          <td><span class="delta-pill ${compDeltaClass}">${d.composite_delta > 0 ? '+' : ''}${d.composite_delta.toFixed(2)}</span></td>
-          <td><span class="delta-pill ${toolDeltaClass}">${d.tool_selection_delta > 0 ? '+' : ''}${d.tool_selection_delta.toFixed(2)}</span></td>
-          <td><span class="delta-pill ${argsDeltaClass}">${d.argument_correctness_delta > 0 ? '+' : ''}${d.argument_correctness_delta.toFixed(2)}</span></td>
-          <td><span class="delta-pill ${ordDeltaClass}">${d.call_ordering_delta > 0 ? '+' : ''}${d.call_ordering_delta.toFixed(2)}</span></td>
-          <td><span class="delta-pill ${effDeltaClass}">${d.step_efficiency_delta > 0 ? '+' : ''}${d.step_efficiency_delta.toFixed(2)}</span></td>
-          <td>${statusPill}</td>
-        `;
-        tbody.appendChild(tr);
-      });
-    }
-
-    // Render smolagents Audit
-    function renderSmolagents() {
-      const container = document.getElementById("smolagentsContainer");
-      const smol = reportData.smolagents_eval || reportData.opensource_agent;
-
-      if (!smol) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <div class="empty-state-icon">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="11" width="18" height="10" rx="2"/>
-                <circle cx="12" cy="5" r="2"/>
-                <path d="M12 7v4"/>
-              </svg>
-            </div>
-            <h3 style="color: var(--text-primary); margin-bottom: 6px; font-size: 1rem;">smolagents Not Evaluated Yet</h3>
-            <p style="margin-bottom: 18px; font-size: 0.85rem; max-width: 480px; margin-left: auto; margin-right: auto;">Run an audit to execute Hugging Face smolagents with real enterprise tools and evaluate its reasoning trajectory.</p>
-            <button class="btn btn-secondary" onclick="triggerRunSmolagents()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="5 3 19 12 5 21 5 3"/>
-              </svg>
-              Run smolagents Audit
-            </button>
-          </div>
-        `;
-        return;
-      }
-
-      const te = smol.trajectory_evaluation || {};
-      const judge = smol.llm_judge || {};
-
-      let fScore = 0, fReason = "", rScore = 0, rReason = "";
-      if (typeof judge.faithfulness === 'object') {
-        fScore = judge.faithfulness.score || 0;
-        fReason = judge.faithfulness.reasoning || "";
-      } else {
-        fScore = judge.faithfulness || 0;
-      }
-      if (typeof judge.relevancy === 'object') {
-        rScore = judge.relevancy.score || 0;
-        rReason = judge.relevancy.reasoning || "";
-      } else {
-        rScore = judge.relevancy || 0;
-      }
-
-      container.innerHTML = `
-        <div class="scenario-card">
-          <div class="sc-title-row">
-            <div>
-              <div class="sc-title">
-                Hugging Face smolagents Audit (v1.26.0)
-                <span class="badge badge-pass">${escapeHtml(te.status || 'PASSED')}</span>
-                <span class="badge badge-domain">ToolCallingAgent</span>
-              </div>
-              <p style="color: var(--text-muted); font-size: 0.82rem; margin-top: 4px;">
-                Autonomous ReAct tool agent executed against enterprise tools and graded by live LLM Judge.
-              </p>
-            </div>
-            <div style="text-align: right;">
-              <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Composite Score</span>
-              <div style="font-family: var(--font-mono); font-size: 1.5rem; font-weight: 800; color: var(--text-primary); font-variant-numeric: tabular-nums;">
-                ${(te.composite_score || 1.0).toFixed(2)}
-              </div>
-            </div>
-          </div>
-
-          <div class="mini-metrics-row" style="margin-bottom: 20px;">
-            <div class="mini-metric">
-              <span class="mini-metric-label">Judge Faithfulness</span>
-              <span class="mini-metric-value">${fScore.toFixed(2)}</span>
-            </div>
-            <div class="mini-metric">
-              <span class="mini-metric-label">Judge Relevancy</span>
-              <span class="mini-metric-value">${rScore.toFixed(2)}</span>
-            </div>
-            <div class="mini-metric">
-              <span class="mini-metric-label">Tool Selection F1</span>
-              <span class="mini-metric-value">${(te.metrics?.tool_selection || 1.0).toFixed(2)}</span>
-            </div>
-            <div class="mini-metric">
-              <span class="mini-metric-label">Total Execution Steps</span>
-              <span class="mini-metric-value">${te.details?.total_steps || 3}</span>
-            </div>
-          </div>
-
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-bottom: 20px;">
-            <div style="background: var(--bg-subtle); border: 1px solid var(--border-light); border-radius: var(--radius-sm); padding: 14px;">
-              <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; margin-bottom: 5px;">
-                LLM Judge Rationale (Faithfulness)
-              </div>
-              <p style="font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5;">${escapeHtml(fReason || "All statements strictly supported by tool execution outputs.")}</p>
-            </div>
-
-            <div style="background: var(--bg-subtle); border: 1px solid var(--border-light); border-radius: var(--radius-sm); padding: 14px;">
-              <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase; margin-bottom: 5px;">
-                LLM Judge Rationale (Relevancy)
-              </div>
-              <p style="font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5;">${escapeHtml(rReason || "Response fully executes the core customer transfer request.")}</p>
-            </div>
-          </div>
-
-          <div class="final-answer-card">
-            <div class="final-answer-title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                <polyline points="22 4 12 14.01 9 11.01"/>
-              </svg>
-              smolagents Final Response
-            </div>
-            <div class="final-answer-content">${escapeHtml(smol.final_answer || "")}</div>
-          </div>
-        </div>
-      `;
+      const delta = (a, b) => {
+        const d = (b || 0) - (a || 0);
+        const cls = d < 0 ? "neg" : (d > 0 ? "pos" : "neutral");
+        return `<span class="delta-pill ${cls}">${d > 0 ? "+" : ""}${d.toFixed(2)}</span>`;
+      };
+      const score = r => `<span style="font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums;">${(r.composite_score || 0).toFixed(2)}</span> <span class="badge ${r.status === "PASSED" ? "badge-pass" : "badge-fail"}">${r.status}</span>`;
+      tbody.innerHTML = rows.map(b => {
+        const r = regressions[b.scenario_id];
+        const bm = b.metrics || {}, rm = r.metrics || {};
+        const caught = r.status === "FAILED";
+        return `
+          <tr title="${escapeHtml((r.failures || []).join("\n"))}">
+            <td><strong>${escapeHtml(b.scenario_id)}</strong></td>
+            <td>
+              <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(b.title || "")}</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">${escapeHtml(b.domain || "")}</div>
+            </td>
+            <td>${score(b)}</td>
+            <td>${score(r)}</td>
+            <td>${delta(b.composite_score, r.composite_score)}</td>
+            <td>${delta(bm.tool_selection, rm.tool_selection)}</td>
+            <td>${delta(bm.argument_correctness, rm.argument_correctness)}</td>
+            <td>${delta(bm.call_ordering, rm.call_ordering)}</td>
+            <td>${delta(bm.step_efficiency, rm.step_efficiency)}</td>
+            <td>${caught ? '<span class="badge badge-pass">Caught</span>' : '<span class="badge badge-fail">Missed</span>'}</td>
+          </tr>`;
+      }).join("");
     }
 
     // Auto-refresh handler

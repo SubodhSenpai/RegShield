@@ -1,144 +1,210 @@
+<div align="center">
+
 # RegShield
 
-**Deterministic quality gates and regression testing for autonomous AI agents.**
+**Regression tests for what your AI agent *does*, not just what it says.**
 
-Catch prerequisite inversions, loop thrashing, and policy violations in your CI/CD pipeline before agent code reaches production.
+Check every tool call, handoff, approval and plan your agent makes, in CI, before a prompt or model change reaches production.
 
----
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-0.4.0-18181b)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-16a34a)](LICENSE)
+[![Core checks](https://img.shields.io/badge/core%20checks-offline%2C%20no%20API%20key-2563eb)](#how-it-works)
+[![Works with](https://img.shields.io/badge/works%20with-LangChain%20%C2%B7%20LangGraph%20%C2%B7%20smolagents%20%C2%B7%20any%20loop-7c3aed)](docs/integrations.md)
 
-## Why RegShield?
+[Quickstart](#quickstart) · [Patterns](#agentic-patterns) · [Integrations](#integrations) · [CI](#use-it-in-ci-and-pytest) · [Dashboard](#local-dashboard) · [Examples](examples/README.md) · [Docs](docs/README.md)
 
-Traditional evals score text outputs. But agents execute actions—querying databases, calling external APIs, and making irreversible state changes. A prompt tweak might produce a convincing final text answer while silently skipping authentication or looping repeatedly.
-
-RegShield evaluates the **execution trace** (`Thought -> Action -> Observation`) deterministically:
-
-* **Prerequisite Inversion**: Calling `deploy_production()` before `run_tests()`.
-* **Loop Thrashing**: Repeating identical queries when stuck, burning budget and latency.
-* **Schema Drift**: Calling tools with invalid parameters or mismatched types.
-* **Hallucinated State**: Reasoning that an action succeeded when the tool returned an error.
-* **100% Local & Fast**: Runs offline in milliseconds. No LLM required for core policy checks ($0 inference cost).
+</div>
 
 ---
 
-## Installation
+## Why
+
+Most evals grade an agent's final answer. But agents act: they move money, change records, deploy code. A prompt tweak can keep the answer sounding right while the agent:
+
+- deploys **before** the tests run
+- sends a payment in the **same batch** as the identity check it depends on
+- calls a tool it must **never** touch, or acts after a person **rejected** the action
+- tells the user *"your refund was processed"* when the refund **never ran**
+- hands work to the **wrong** agent, or loops between agents
+
+RegShield checks the **execution trace** (each thought, tool call and result) against rules you write once. The core checks are deterministic, run offline in milliseconds and need no LLM.
+
+## Quickstart
 
 ```bash
 pip install regression-shield
 ```
 
-*(or install from source: `pip install -e .`)*
-
----
-
-## Quickstart
-
-Evaluate an execution trace against a declarative scenario policy:
-
 ```python
 from regression_shield import evaluate_trace
 
-# 1. Define expected policy rules
 scenario = {
     "scenario_id": "deploy_gate",
+    "title": "Tests before deploy",
     "expected_tools": ["run_unit_tests", "deploy_production"],
-    "expected_order": ["run_unit_tests", "deploy_production"],
-    "expected_arguments": {
-        "deploy_production": {"env": "staging"}
-    },
-    "optimal_step_count": 2,
+    "expected_order": ["run_unit_tests", "deploy_production"],        # tests before deploy
+    "expected_arguments": {"deploy_production": {"env": "staging"}},
+    "forbidden_tools": ["drop_database"],                              # never allowed
 }
 
-# 2. Evaluate the agent's actual steps
-result = evaluate_trace(
-    scenario=scenario,
-    trace=[
-        {"thought": "Running test suite.", "action": {"name": "run_unit_tests", "args": {}}, "observation": "PASSED"},
-        {"thought": "Deploying build.", "action": {"name": "deploy_production", "args": {"env": "staging"}}, "observation": "DEPLOYED"},
-    ]
-)
+trace = [
+    {"thought": "Run the tests first.",
+     "action": {"name": "run_unit_tests", "args": {}}, "observation": "42 passed"},
+    {"thought": "Tests pass, deploying to staging.",
+     "action": {"name": "deploy_production", "args": {"env": "staging"}}, "observation": "DEPLOYED"},
+]
 
-result.print_diagnostics()
-print(f"Passed: {result.passed} | Score: {result.composite_score:.2f}")
+report = evaluate_trace(scenario, trace)
+print(report.passed, report.composite_score)   # True 1.0
 ```
 
-If the agent regresses (e.g. executes deploy before tests), `print_diagnostics()` pinpoints the exact failure:
+When the agent regresses (deploying to `prod` before testing), `print(report.format())` says exactly what went wrong:
 
 ```text
-[FAIL] deploy_gate: Cloud Deploy (Composite: 0.80)
-    -> Order inversion: 'deploy_production' (step 1) executed before prerequisite 'run_unit_tests' (step 2)
+FAILED  deploy_gate  Tests before deploy  (composite 0.55)
+  tool_selection          1.00
+  argument_correctness    0.00
+  call_ordering           0.00
+  step_efficiency         1.00
+  reasoning_faithfulness  1.00
+  pattern checks: Policy PASS
+Failures:
+  - Argument correctness 0.00 < 0.85: deploy_production.env was 'prod', expected 'staging'
+  - Call ordering 0.00 < 1.00: 'deploy_production' (step 1) ran before its prerequisite 'run_unit_tests' (step 2)
 ```
 
----
+You rarely write traces by hand: the [integrations](#integrations) record them from a real run. To see ten scenarios with no code at all, run `regshield demo`.
 
-## Evaluation Dimensions
+## How it works
 
-Every trace is scored across 5 deterministic dimensions (0.0 to 1.0):
+Each trace is scored on five metrics. A metric below its threshold, or any failing pattern check, fails the scenario.
 
-| Metric | Weight | What It Enforces | Default Threshold |
+| Metric | Weight | Checks that | Default threshold |
 |---|:---:|---|:---:|
-| **Tool Selection F1** | 25% | Harmonic mean of precision and recall over expected tools. Flags missing or unauthorized calls. | ≥ 0.85 |
-| **Argument Correctness** | 25% | Validates tool arguments against parameter schemas and ground truth values. | ≥ 0.85 |
-| **Call Ordering** | 20% | Strict enforcement of prerequisite sequence dependencies. Any inversion zeroes the score. | 1.00 |
-| **Step Efficiency** | 15% | Penalizes redundant duplicate calls (loop thrashing) and excessive step counts. | ≥ 0.70 |
-| **Reasoning Faithfulness** | 15% | Flags when thoughts claim success despite error observations. | ≥ 0.85 |
+| Tool selection (F1) | 25% | The expected tools ran, and no others (scored when `expected_tools` is set) | 0.85 |
+| Argument correctness | 25% | Tools got the expected values (numbers compare numerically; text ignores case, `_` and `-`) | 0.85 |
+| Call ordering | 20% | Prerequisites finished before the tools that depend on them | 1.00 |
+| Step efficiency | 15% | No repeated calls or extra steps | 0.70 |
+| Reasoning faithfulness | 15% | No claim of success right after a failed call or a denied approval | 0.85 |
 
-*Composite Score Threshold: ≥ 0.75 to pass.*
+<details>
+<summary><b>How the faithfulness check decides, and when to add the LLM judge</b></summary>
+<br>
 
----
+The check is rule-based. A thought or final answer that claims success ("succeeded", "completed", "has been processed", "all set"...) right after a tool result reporting an error, or right after a person denied an action, is flagged. Negations ("was not processed") and wording that acknowledges the failure ("the refund was rejected") are not.
+
+Rules can't read meaning: an answer saying "refunded $500" when the tool refunded $50 passes them. For that, add the [LLM judge](#optional-llm-judge).
+
+</details>
+
+## Agentic patterns
+
+Beyond one agent calling tools, RegShield checks the patterns production agents are built from. A pattern check runs when your scenario configures it or the trace contains its events, and appears in the report only if it checked something.
+
+| Pattern | Catches | Scenario fields |
+|---|---|---|
+| **Policy** | Forbidden tools, too many calls to a tool | `forbidden_tools`, `max_tool_calls` |
+| **Human approval** | Risky tools run without approval, or after a denial | `requires_approval` |
+| **Plan-and-execute** | No plan, calls outside the plan, pushing on after a failure without replanning | `require_plan`, `expected_plan` |
+| **Multi-agent** | An agent using another agent's tools, wrong delegation order, handoff loops | `agent_tools`, `expected_agents`, `max_handoffs` |
+| **Routing** | Requests sent to the wrong place, with accuracy across a test set | `expected_route` |
+| **Parallel calls** | Independent calls run one by one; dependent calls run at the same time | `expected_parallel`, `expected_order` pairs |
+| **Graph workflows** | Transitions the graph shouldn't take, runaway cycles | `allowed_transitions`, `max_node_visits` |
+| **Evaluator-optimizer** | Ignored critiques, shipping a rejected draft, too many rounds | `max_revision_rounds` |
+
+In your own code, record events with a `TraceRecorder`:
+
+```python
+from regression_shield import TraceRecorder, evaluate_trace
+
+recorder = TraceRecorder(agent="triage_agent")
+
+@recorder.tool                       # records arguments, result or error
+def issue_refund(order_id: str, amount: float) -> dict:
+    return {"status": "REFUNDED", "amount": amount}
+
+recorder.handoff("billing_agent")                                       # multi-agent
+recorder.approval("issue_refund", approved=True, by="lead@example.com")  # human approval
+issue_refund("ORD-7731", 89.0)
+
+report = evaluate_trace({
+    "scenario_id": "refund",
+    "requires_approval": ["issue_refund"],
+    "agent_tools": {"billing_agent": ["issue_refund"]},
+}, recorder)
+```
+
+[Guide to every pattern](docs/patterns.md)
 
 ## Integrations
 
-### LangChain
+| Framework | How | Recorded automatically |
+|---|---|---|
+| **LangChain / LangGraph** | `RegressionShieldCallbackHandler()` as a callback | Tool calls, errors, reasoning, final answer, graph nodes, parallel calls and fan-out, agents and `transfer_to_*` handoffs (supervisor, swarm), `HumanInTheLoopMiddleware` approvals |
+| **smolagents** | `instrument_smolagents(agent)` before `agent.run` | Tool calls from `CodeAgent` code and `ToolCallingAgent`, errors, reasoning, final answer, parallel calls, managed agents as handoffs |
+| **Anything else** (OpenAI SDK, CrewAI, AutoGen, your own loop) | `TraceRecorder`: wrap tools, call one method per event | Tool calls you wrap, plus the events you record |
+| **Any language** | `POST /api/evaluate-trace` on `regshield serve` | Whatever you send |
 
 ```python
-from regression_shield import evaluate_trace
-from regression_shield.adapters.langchain import RegressionShieldCallbackHandler
+from regression_shield import RegressionShieldCallbackHandler, evaluate_trace
 
 handler = RegressionShieldCallbackHandler()
-agent.invoke({"input": task}, config={"callbacks": [handler]})
-
-result = evaluate_trace(scenario=scenario, trace=handler.get_trace())
+app.invoke(inputs, config={"callbacks": [handler]})     # an agent, chain or compiled graph
+report = evaluate_trace(scenario, handler)
 ```
 
-### Hugging Face smolagents
-
 ```python
-from regression_shield import evaluate_trace
-from regression_shield.adapters.smolagents import extract_smolagents_trace
+from regression_shield import evaluate_trace, instrument_smolagents
 
+recorder = instrument_smolagents(agent)   # CodeAgent or ToolCallingAgent
 agent.run(task)
-result = evaluate_trace(scenario=scenario, trace=extract_smolagents_trace(agent))
+report = evaluate_trace(scenario, recorder)
 ```
 
-### Python Function Decorator (`@shield`)
+[Integration guide](docs/integrations.md) · [Runnable examples with a local LLM](examples/README.md)
+
+## Use it in CI and pytest
+
+**Pytest.** `raise_for_failures()` fails the test with every reason:
 
 ```python
-from regression_shield import shield
-
-@shield(scenario=scenario, on_violation="raise")
-def my_agent(prompt: str):
-    return agent_executor.run(prompt)
-
-output, report = my_agent("Deploy to staging")
+def test_deploy_gate():
+    evaluate_trace(scenario, run_my_agent("Deploy to staging")).raise_for_failures()
 ```
 
----
+```text
+EvaluationFailed: deploy_gate failed:
+  - Call ordering 0.00 < 1.00: 'deploy_production' (step 1) ran before its prerequisite 'run_unit_tests' (step 2)
+```
 
-## CI/CD Quality Gate
+**Scenario files.** Save scenarios with recorded traces in a JSON file and gate every pull request:
 
-Run RegShield in your GitHub Actions or pre-commit workflow:
+```json
+[
+  {
+    "scenario": {"scenario_id": "deploy_gate", "expected_order": ["run_unit_tests", "deploy_production"]},
+    "trace": [
+      {"action": {"name": "run_unit_tests", "args": {}}, "observation": "42 passed"},
+      {"action": {"name": "deploy_production", "args": {"env": "staging"}}, "observation": "DEPLOYED"}
+    ],
+    "regression_trace": [
+      {"action": {"name": "deploy_production", "args": {"env": "staging"}}, "observation": "DEPLOYED"}
+    ]
+  }
+]
+```
 
 ```bash
-# Exit code 0 = Passed | Exit code 1 = Block PR
-regshield eval -f ./examples/sample_scenarios.json --fail-on-regression
+regshield eval scenarios.json       # exit code 0 all pass, 1 a scenario failed, 2 bad input
 ```
 
-Example GitHub Actions workflow (`.github/workflows/quality_gate.yml`):
+`regression_trace` is optional: a known-bad trace the scenario must catch. If it passes, the run fails too, because the scenario is too weak to catch that regression.
 
 ```yaml
-name: Agent Quality Gate
+# .github/workflows/agent-gate.yml
+name: Agent quality gate
 on: [pull_request]
-
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -146,36 +212,70 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.12"
       - run: pip install regression-shield
-      - run: regshield eval -f ./scenarios.json --fail-on-regression
+      - run: regshield eval scenarios.json
 ```
 
----
+## Logs
 
-## Local Observability Dashboard
+Add `--verbose` (CLI), `verbose=True` (Python) or `REGSHIELD_LOG=debug` (anywhere) to see every metric, pattern check and judge call:
 
-Launch the built-in minimal trace inspector on your local machine:
+```text
+[regshield] DEBUG   evaluator: Evaluating 'deploy_gate': 2 steps, 2 tool calls
+[regshield] DEBUG   evaluator:   call_ordering          1.00
+[regshield] DEBUG   patterns:   pattern policy          PASSED (1.00)
+[regshield] INFO    evaluator: 'deploy_gate' PASSED (composite 1.00) in 0.4 ms
+```
+
+Logs go to stderr, so stdout stays clean for scripts and CI.
+
+## Local dashboard
 
 ```bash
-regshield serve --port 8000
+regshield serve
 ```
 
-* Zero configuration, runs 100% locally on `http://localhost:8000`.
-* Ingest traces from any language via REST: `POST /api/evaluate-trace`.
-* Auto-persists reports to `./reports/latest_report.json`.
+Opens `http://localhost:8000` with each scenario's metrics, pattern checks and step-by-step trace, read from `reports/latest_report.json`. `regshield eval` writes that file; in Python, pass `save_report=True`. **Run demo** evaluates the bundled samples, and **Baseline vs. Regression** shows which known-bad traces were caught.
 
----
+> [!IMPORTANT]
+> The dashboard accepts connections from your own machine only and never serves files from disk. It ignores API keys or endpoints sent in requests. `--host 0.0.0.0` exposes it to your network with no authentication, so use it only on networks you trust.
 
-## Development & Tests
+## Optional LLM judge
+
+An LLM reads the whole trace to catch what rules can't, like reporting the wrong amount. It works with any OpenAI-compatible API, including a local Ollama server.
 
 ```bash
-# Run the test suite (25 tests, offline, < 0.6s)
-pytest
+export OPENROUTER_API_KEY=sk-or-...     # sent to OpenRouter
+# or: export OPENAI_API_KEY=sk-...      # sent to OpenAI (default model gpt-4.1-mini)
+regshield eval scenarios.json --llm-judge
 ```
 
----
+Set `JUDGE_MODEL` and `OPENROUTER_BASE_URL` / `OPENAI_BASE_URL` (or `--model`, `--base-url`) to choose another model or endpoint. Once enabled, the judge must return a verdict: a rate limit or unusable reply fails the scenario, unless you pass `--judge-on-error pass`. RegShield reads keys from the environment and does not load `.env` files.
+
+## Documentation
+
+| Guide | Contents |
+|---|---|
+| [Getting started](docs/getting-started.md) | Install, first scenario, capturing traces, CI |
+| [Agentic patterns](docs/patterns.md) | Every pattern, how to record it, and its violation messages |
+| [Integrations](docs/integrations.md) | LangChain, LangGraph, smolagents, `TraceRecorder`, `@shield`, REST |
+| [Reference](docs/reference.md) | Scenario fields, trace and report formats, CLI, environment variables, logging |
+| [Examples](examples/README.md) | Nine real agents, run against a local LLM |
+
+## Development
+
+```bash
+python -m venv .venv
+source .venv/bin/activate                 # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+pytest                                    # offline, no API keys needed
+ruff check .
+python -m build                           # dist/*.whl and dist/*.tar.gz
+```
+
+The `test` extra (included in `dev`) installs LangChain, LangGraph, langgraph-supervisor and smolagents, so the integration tests run real agents offline with scripted models.
 
 ## License
 
-MIT
+[MIT](LICENSE)

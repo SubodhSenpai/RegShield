@@ -6,11 +6,16 @@ const SECTIONS = [
   { id: 'quickstart',   label: 'Quickstart' },
   { id: 'scenario',     label: 'Scenario Spec' },
   { id: 'metrics',      label: 'Metrics' },
+  { id: 'patterns',     label: 'Agentic Patterns' },
+  { id: 'recorder',     label: 'TraceRecorder' },
   { id: 'langchain',    label: 'LangChain' },
+  { id: 'langgraph',    label: 'LangGraph' },
   { id: 'smolagents',   label: 'smolagents' },
+  { id: 'codeagent',    label: 'Code Agents' },
   { id: 'decorator',    label: '@shield' },
   { id: 'cicd',         label: 'CI/CD Gate' },
   { id: 'rest',         label: 'REST API' },
+  { id: 'logging',      label: 'Logging (--verbose)' },
 ];
 
 const CONTENT = {
@@ -21,153 +26,286 @@ const CONTENT = {
     snippet: `from regression_shield import evaluate_trace
 
 trace = [
-    {
-        "thought": "I will run security audit first.",
-        "action": {"type": "tool_call", "name": "security_scan", "args": {"target": "repo"}},
-        "observation": "Vulnerabilities: 0"
-    },
-    {
-        "thought": "Clean. Proceeding to publish release.",
-        "action": {"type": "tool_call", "name": "publish_release", "args": {"tag": "v1.0.0"}},
-        "observation": "Published"
-    }
+    {"thought": "Run the security scan first.",
+     "action": {"name": "security_scan", "args": {"target": "repo"}},
+     "observation": "Vulnerabilities: 0"},
+    {"thought": "Clean. Publishing the release.",
+     "action": {"name": "publish_release", "args": {"tag": "v1.0.0"}},
+     "observation": "Published"},
 ]
 
-result = evaluate_trace(
+report = evaluate_trace(
     scenario={
         "scenario_id": "release_gate",
-        "expected_tools":    ["security_scan", "publish_release"],
-        "expected_order":    ["security_scan", "publish_release"],
-        "optimal_step_count": 2,
+        "expected_tools": ["security_scan", "publish_release"],
+        "expected_order": ["security_scan", "publish_release"],
     },
-    trace=trace
+    trace=trace,
 )
 
-result.print_diagnostics()     # per-metric breakdown
-print(result.passed)           # True
-print(result.composite_score)  # 1.00`,
+print(report.format())          # scores, pattern checks, every failure
+print(report.passed)            # True
+report.raise_for_failures()     # in pytest: fails the test with every reason`,
     lang: 'python',
   },
   scenario: {
     label: 'Scenario Spec',
     title: 'Describe what the agent should do',
-    snippet: `# Pass as a Python dict or load from JSON/YAML
+    snippet: `# A Python dict, or a JSON object in a scenario file
 scenario = {
-    "scenario_id":       "deploy_gate",          # unique identifier
-    "title":            "Cloud Deploy Pipeline",  # human-readable label
-    "domain":           "DevOps",                 # grouping tag
-    "expected_tools":   ["run_unit_tests", "deploy_production"],  # required tools
-    "expected_order":   ["run_unit_tests", "deploy_production"],  # prerequisite order
-    "expected_arguments": {
-        "deploy_production": {"env": "staging"}   # optional arg schema check
-    },
-    "optimal_step_count": 2,                      # ideal trace length for efficiency scoring
+    "scenario_id": "deploy_gate",                 # the only required field
+    "title": "Cloud deploy pipeline",
+    "expected_tools": ["run_unit_tests", "deploy_production"],
+    "expected_order": ["run_unit_tests", "deploy_production"],
+    "expected_arguments": {"deploy_production": {"env": "staging"}},
+    "forbidden_tools": ["drop_database"],
+    "metadata": {"owner": "platform-team"},       # your own data, not checked
 }
 
-result = evaluate_trace(scenario=scenario, trace=agent_trace)`,
+# A misspelled field raises ValueError instead of silently skipping a check
+report = evaluate_trace(scenario, trace)`,
     lang: 'python',
     fields: [
-      { name: 'scenario_id',         type: 'str',       desc: 'Unique identifier for this evaluation gate. Used in reports and dashboards.' },
-      { name: 'expected_tools',      type: 'list[str]', desc: 'Tools that must appear in the trace. Missing any drops Tool Selection F1 below threshold.' },
-      { name: 'expected_order',      type: 'list[str]', desc: 'Enforces prerequisite ordering. Any inversion zeroes the Call Ordering score.' },
-      { name: 'expected_arguments',  type: 'dict',      desc: 'Optional per-tool argument schema. Mismatches reduce Argument Correctness score.' },
-      { name: 'optimal_step_count',  type: 'int',       desc: 'Target trace length. Excess steps (including redundant/looping calls) penalise Step Efficiency.' },
+      { name: 'scenario_id',         type: 'str',        desc: 'Name used in reports and the dashboard. The only required field.' },
+      { name: 'title / domain / goal', type: 'str',      desc: 'Labels. goal is also given to the LLM judge.' },
+      { name: 'expected_tools',      type: 'list[str]',  desc: 'Tools that should run, scored as F1: missing and unexpected tools both lower it.' },
+      { name: 'expected_order',      type: 'list',       desc: 'A sequence, or [before, after] pairs for a partial order.' },
+      { name: 'expected_arguments',  type: 'dict',       desc: 'Expected argument values per tool. Numbers compare numerically; text ignores case, _ and -.' },
+      { name: 'optimal_step_count',  type: 'int',        desc: 'Ideal number of tool calls (default: the number of expected_tools, or 3).' },
+      { name: 'forbidden_tools',     type: 'list[str]',  desc: 'Tools the agent must never call. Any call fails the scenario.' },
+      { name: 'max_tool_calls',      type: 'dict',       desc: 'Per-tool call caps, e.g. {"issue_refund": 1}.' },
+      { name: 'requires_approval',   type: 'list[str]',  desc: 'Tools that need an approved human approval before each call.' },
+      { name: 'require_plan',        type: 'bool',       desc: 'A plan must come before the first tool call.' },
+      { name: 'expected_plan',       type: 'list[str]',  desc: 'Steps the first plan must contain, in order.' },
+      { name: 'agent_tools',         type: 'dict',       desc: 'Which tools each agent may use, e.g. {"billing": ["issue_refund"]}.' },
+      { name: 'expected_agents',     type: 'list[str]',  desc: 'Agents that should act, in this order.' },
+      { name: 'max_handoffs',        type: 'int',        desc: 'Cap on handoffs between agents.' },
+      { name: 'expected_route',      type: 'str | list', desc: 'Where a router should send the request.' },
+      { name: 'expected_parallel',   type: 'list[list]', desc: 'Groups of tools that should run concurrently.' },
+      { name: 'allowed_transitions', type: 'dict',       desc: 'Graph edges: node -> nodes it may move to.' },
+      { name: 'max_node_visits',     type: 'int | dict', desc: 'How many times a graph node may be entered.' },
+      { name: 'max_revision_rounds', type: 'int',        desc: 'Cap on critique rounds in an evaluator-optimizer loop.' },
+      { name: 'metadata',            type: 'dict',       desc: 'Your own data, kept in the report and not checked.' },
     ],
   },
   metrics: {
     label: 'Scoring',
-    title: 'Five deterministic dimensions',
+    title: 'Five deterministic metrics',
     metrics: [
-      { name: 'Tool Selection F1',     weight: '25%', desc: 'Precision and recall over expected_tools. Missing required tools or calling unauthorized/unexpected tools lowers this score. Threshold: 0.85.' },
-      { name: 'Argument Correctness',  weight: '25%', desc: 'Validates tool invocation arguments against expected parameter schemas and ground truth values. Threshold: 0.85.' },
-      { name: 'Call Ordering',         weight: '20%', desc: 'Strict enforcement of prerequisite sequences. Any inversion (e.g. deploy before test) zeroes this score. Threshold: 1.00.' },
-      { name: 'Step Efficiency',       weight: '15%', desc: 'Ratio of optimal_step_count to actual steps taken. Detects duplicate identical tool calls (loop thrashing) and penalizes excessive exploration. Threshold: 0.70.' },
-      { name: 'Reasoning Faithfulness', weight: '15%', desc: 'Verifies each thought is grounded in preceding observations. Flags when an agent hallucinates success despite error outputs. Threshold: 0.85.' },
+      { name: 'Tool Selection F1',      weight: '25%', desc: 'Precision and recall over expected_tools: missing tools and unexpected ones both lower it. Threshold: 0.85.' },
+      { name: 'Argument Correctness',   weight: '25%', desc: 'Share of expected argument values the best-matching call used. Threshold: 0.85.' },
+      { name: 'Call Ordering',          weight: '20%', desc: 'Share of ordering constraints respected. A tool that ran before, or in parallel with, its prerequisite breaks one. Threshold: 1.00.' },
+      { name: 'Step Efficiency',        weight: '15%', desc: 'optimal / actual tool calls, minus 0.25 per repeated identical call. Catches loops and wandering. Threshold: 0.70.' },
+      { name: 'Reasoning Faithfulness', weight: '15%', desc: 'Rule-based: flags a thought or final answer claiming success right after a tool error or a denied approval. Add the LLM judge for claims rules cannot check, like a wrong amount. Threshold: 0.85.' },
+    ],
+  },
+  patterns: {
+    label: 'Agentic Patterns',
+    title: 'Checks for plans, handoffs, approvals and more',
+    snippet: `scenario = {
+    "scenario_id": "support_refund",
+    "expected_tools": ["lookup_order", "issue_refund"],
+    "forbidden_tools": ["delete_customer"],                 # policy
+    "requires_approval": ["issue_refund"],                  # human-in-the-loop
+    "agent_tools": {"triage": ["lookup_order"],             # multi-agent
+                    "billing": ["issue_refund"]},
+    "expected_agents": ["triage", "billing"],
+}
+
+# A check runs when the scenario sets its fields or the trace has its events,
+# and is reported only if it had something to check
+report = evaluate_trace(scenario, trace)
+print(report.patterns["human_approval"])
+# {'label': 'Human Approval', 'passed': True, 'score': 1.0, 'violations': [], ...}`,
+    lang: 'python',
+    metrics: [
+      { name: 'Policy rules', weight: 'forbidden_tools · max_tool_calls', desc: 'Forbidden tools and per-tool call caps. Tool selection is a score, so an agent can call every expected tool plus a dangerous one and still pass it; this makes it a hard failure.' },
+      { name: 'Human approval', weight: 'requires_approval', desc: 'Guarded tools need an approval before each call. Running after a denial is always flagged, and so is telling the user a denied action happened.' },
+      { name: 'Plan & execute', weight: 'require_plan · expected_plan', desc: 'A plan comes first, calls stay within the current plan, the final plan is completed in order, and a failed call is followed by a retry or a new plan.' },
+      { name: 'Multi-agent handoffs', weight: 'agent_tools · expected_agents · max_handoffs', desc: 'Per-agent tool permissions, the order agents acted in, a handoff cap and loop detection. A handoff counts once its target acts.' },
+      { name: 'Routing', weight: 'expected_route', desc: 'The first routing decision must match. The CLI reports routing accuracy across a scenario file.' },
+      { name: 'Parallel calls', weight: 'expected_parallel', desc: 'Tools that should run concurrently must share a parallel group; a dependent call in the same group as its prerequisite is an ordering violation.' },
+      { name: 'Graph workflows', weight: 'allowed_transitions · max_node_visits', desc: 'Moves must follow allowed edges, within per-node visit caps. Fan-out branches form one layer, so only real edges need listing.' },
+      { name: 'Evaluator-optimizer', weight: 'max_revision_rounds', desc: 'Revisions must change after a rejection, and the loop must end on an approved draft, within the round budget.' },
+    ],
+  },
+  recorder: {
+    label: 'TraceRecorder',
+    title: 'Record any agent, in any framework',
+    snippet: `from regression_shield import TraceRecorder, evaluate_trace
+
+recorder = TraceRecorder(agent="triage_agent")
+
+@recorder.tool
+def issue_refund(order_id: str, amount: float) -> dict:
+    return {"status": "REFUNDED", "amount": amount}
+
+recorder.handoff("billing_agent")
+recorder.approval("issue_refund", approved=False, by="lead@example.com")
+issue_refund("ORD-7731", 89.0)   # runs anyway, after a denial
+
+report = evaluate_trace(
+    scenario={
+        "scenario_id": "refund_gate",
+        "requires_approval": ["issue_refund"],
+        "agent_tools": {"billing_agent": ["issue_refund"]},
+    },
+    trace=recorder,
+)
+
+print(report.passed)     # False
+print(report.failures)   # ["Human Approval: Step 3: 'issue_refund' ran after its approval was denied"]`,
+    lang: 'python',
+    fields: [
+      { name: '@recorder.tool / wrap(fn)', type: 'decorator', desc: 'Records each call: arguments, result, or error (then re-raises). Async functions work too. agent= credits calls to one agent.' },
+      { name: 'tool_call(name, args, obs)', type: 'method', desc: 'Record a tool call you ran yourself.' },
+      { name: 'thought(text)', type: 'method', desc: 'Reasoning attached to the next step.' },
+      { name: 'plan(steps)', type: 'method', desc: 'A plan: tool names in the order the agent intends to run them.' },
+      { name: 'handoff(to)', type: 'method', desc: 'Control passes to another agent; later steps belong to it.' },
+      { name: 'approval(tool, approved)', type: 'method', desc: 'A person\'s approval decision for the next call to that tool.' },
+      { name: 'route(to)', type: 'method', desc: "A router's decision." },
+      { name: 'node(name)', type: 'method', desc: 'Entering a graph node; later steps are tagged with it.' },
+      { name: 'parallel()', type: 'context', desc: 'Steps recorded inside the with-block ran concurrently.' },
+      { name: 'draft / critique', type: 'method', desc: 'Evaluator-optimizer rounds.' },
+      { name: 'final_answer(text)', type: 'method', desc: "The agent's answer, checked for success claims after a failure." },
+    ],
+  },
+  langgraph: {
+    label: 'LangGraph',
+    title: 'Nodes, fan-out, sub-agents and approvals, automatically',
+    snippet: `from regression_shield import RegressionShieldCallbackHandler, evaluate_trace
+
+handler = RegressionShieldCallbackHandler()
+app.invoke(inputs, config={"callbacks": [handler]})   # app = graph.compile()
+
+report = evaluate_trace({
+    "scenario_id": "content_pipeline",
+    "allowed_transitions": {"writer": ["reviewer"], "reviewer": ["writer", "publish"]},
+    "max_node_visits": {"reviewer": 3},
+}, handler)
+
+print(report.patterns["graph"]["details"]["path"])
+# ['writer', 'reviewer', 'writer', 'reviewer', 'publish']
+
+# Also recorded with no extra code: fan-out branches as parallel groups,
+# sub-agents (supervisor, swarm) and their transfer_to_* handoffs, and
+# HumanInTheLoopMiddleware decisions as approvals.`,
+    lang: 'python',
+  },
+  codeagent: {
+    label: 'Code Agents',
+    title: 'smolagents CodeAgent, recorded as tools run',
+    snippet: `from smolagents import CodeAgent
+from regression_shield import evaluate_trace, instrument_smolagents
+
+agent = CodeAgent(tools=[run_unit_tests, deploy_production], model=model)
+recorder = instrument_smolagents(agent)   # before the run
+agent.run("Deploy to staging")
+
+# Calls made from the agent's generated Python code are recorded with
+# their arguments and results; each step's reasoning becomes the thought.
+report = evaluate_trace(scenario, recorder)`,
+    lang: 'python',
+  },
+  logging: {
+    label: 'Logging',
+    title: 'See every check with --verbose',
+    snippet: `# CLI: every metric, pattern check and judge call, on stderr
+regshield eval scenarios.json --verbose
+
+# Python
+report = evaluate_trace(scenario, trace, verbose=True)
+
+# Or without code changes
+REGSHIELD_LOG=debug python run_evals.py
+
+[regshield] DEBUG   evaluator: Evaluating 'deploy_gate': 2 steps, 2 tool calls
+[regshield] DEBUG   patterns:   pattern policy          PASSED (1.00)
+[regshield] INFO    evaluator: 'deploy_gate' PASSED (composite 1.00) in 0.4 ms`,
+    lang: 'bash',
+    fields: [
+      { name: '--verbose / -v', type: 'CLI flag', desc: 'Debug logs for that command. Works on eval, demo and serve.' },
+      { name: 'verbose=True', type: 'evaluate_trace', desc: 'Debug logs on stderr from then on.' },
+      { name: 'enable_logging(level)', type: 'function', desc: 'Turn on logs at a chosen level (DEBUG, INFO, WARNING).' },
+      { name: 'REGSHIELD_LOG', type: 'env var', desc: 'debug, info or warning. Turns logs on without changing code.' },
     ],
   },
   langchain: {
     label: 'LangChain',
-    title: 'Zero-config callback handler',
-    snippet: `from regression_shield.adapters.langchain import RegressionShieldCallbackHandler
-from regression_shield import evaluate_trace
+    title: 'One callback handler, no changes to the agent',
+    snippet: `from langchain.agents import create_agent
+from regression_shield import RegressionShieldCallbackHandler, evaluate_trace
 
-# 1. Attach the callback — no changes to your agent code
+agent = create_agent(model, tools=[lookup_customer, validate_policy, execute_refund])
 handler = RegressionShieldCallbackHandler()
+agent.invoke({"messages": [{"role": "user", "content": "Refund customer 99401"}]},
+             config={"callbacks": [handler]})
 
-agent_executor.invoke(
-    {"input": "Cancel renewal for customer 99401"},
-    config={"callbacks": [handler]}
-)
-
-# 2. Evaluate the captured trace
-result = evaluate_trace(
+# Tool calls, errors, reasoning, parallel calls and the final answer are recorded
+report = evaluate_trace(
     scenario={
         "scenario_id": "refund_gate",
-        "expected_tools": ["lookup_customer", "validate_policy", "execute_refund"],
         "expected_order": ["lookup_customer", "validate_policy", "execute_refund"],
-        "optimal_step_count": 3,
+        "max_tool_calls": {"execute_refund": 1},
     },
-    trace=handler.get_trace()   # list of StepTrace dicts
+    trace=handler,
 )
-
-print(result.composite_score)  # e.g. 0.96
-print(result.passed)           # True`,
+print(report.format())`,
     lang: 'python',
   },
   smolagents: {
     label: 'smolagents',
     title: 'Hugging Face agents in two lines',
-    snippet: `from smolagents import CodeAgent, HfApiModel
-from regression_shield.adapters.smolagents import extract_smolagents_trace
-from regression_shield import evaluate_trace
+    snippet: `from smolagents import ToolCallingAgent
+from regression_shield import evaluate_trace, instrument_smolagents
 
-agent = CodeAgent(tools=[...], model=HfApiModel())
+agent = ToolCallingAgent(tools=[...], model=model, managed_agents=[research_agent])
+recorder = instrument_smolagents(agent)   # before the run
 agent.run(task)
 
-# Normalise agent.logs into standard StepTrace format
-trace = extract_smolagents_trace(agent)
-
-result = evaluate_trace(
+# Tool calls, parallel calls, the answer, and managed agents as handoffs
+report = evaluate_trace(
     scenario={
-        "scenario_id": "smol_gate",
-        "expected_tools":    ["run_tests"],
-        "expected_order":    ["run_tests"],
-        "optimal_step_count": 1,
+        "scenario_id": "research_gate",
+        "agent_tools": {"research_agent": ["web_search"]},
     },
-    trace=trace
+    trace=recorder,
 )
+print(report.passed)
 
-print(result.passed)
-result.print_diagnostics()`,
+# Didn't instrument before the run? Rebuild the trace from memory:
+# from regression_shield import extract_smolagents_trace
+# report = evaluate_trace(scenario, extract_smolagents_trace(agent))`,
     lang: 'python',
   },
   decorator: {
     label: '@shield',
-    title: 'Decorator — zero boilerplate',
-    snippet: `from regression_shield import shield
+    title: 'Evaluate every run of a function',
+    snippet: `from regression_shield import RegressionShieldCallbackHandler, shield
+
+handler = RegressionShieldCallbackHandler()
 
 @shield(
     scenario={
-        "scenario_id":    "pipeline_gate",
-        "expected_tools": ["run_unit_tests", "deploy_production"],
+        "scenario_id": "pipeline_gate",
         "expected_order": ["run_unit_tests", "deploy_production"],
-        "optimal_step_count": 2,
     },
-    on_violation="raise"   # raises RuntimeError if report.passed is False
+    get_trace=handler.get_trace,   # omit if the function returns the trace itself
+    raise_on_failure=True,         # raises EvaluationFailed when the evaluation fails
 )
 def run_pipeline(task: str):
-    # Returns (execution_output, evaluation_report)
-    return my_agent.execute(task)
+    return agent.invoke({"messages": [{"role": "user", "content": task}]},
+                        config={"callbacks": [handler]})
 
-output, report = run_pipeline("deploy v1.0.0")
-print("Quality gate passed:", report.passed)`,
+# The decorated function returns (output, report)
+output, report = run_pipeline("Deploy v1.0.0")`,
     lang: 'python',
   },
   cicd: {
     label: 'CI/CD Gate',
-    title: 'Block PRs automatically',
-    snippet: `# .github/workflows/agent_gate.yml
-name: Agent Quality Gate
+    title: 'Block pull requests automatically',
+    snippet: `# .github/workflows/agent-gate.yml
+name: Agent quality gate
 on: [pull_request]
 
 jobs:
@@ -177,41 +315,34 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      - run: pip install -e .
-
-      - name: Enforce quality gate
-        run: |
-          regshield check -f ./examples/sample_scenarios.json --fail-on-regression
-          # Exit 0 = PASSED  |  Exit 1 = REGRESSION BLOCKED`,
+          python-version: '3.12'
+      - run: pip install regression-shield
+      # Exit 0: all passed. Exit 1: a scenario failed, or a known-bad
+      # regression_trace passed. Exit 2: bad input.
+      - run: regshield eval scenarios.json`,
     lang: 'yaml',
   },
   rest: {
     label: 'REST API',
-    title: 'Language-agnostic ingestion',
-    snippet: `# Start the local server (air-gapped, no cloud required)
-regshield serve --port 8000
+    title: 'Evaluate from any language',
+    snippet: `# Start the local server (listens on 127.0.0.1 only)
+regshield serve
 
-# Evaluate from any language — send scenario + trace in one payload
+# POST a scenario and a trace; the response is the report
 curl -X POST http://localhost:8000/api/evaluate-trace \\
   -H "Content-Type: application/json" \\
   -d '{
-    "scenario_id":        "auth_gate",
-    "expected_tools":     ["verify_auth", "fetch_data"],
-    "expected_order":     ["verify_auth", "fetch_data"],
-    "optimal_step_count": 2,
+    "scenario": {
+      "scenario_id": "auth_gate",
+      "expected_order": ["verify_auth", "fetch_data"]
+    },
     "trace": [
-      {
-        "thought":     "Verifying auth before proceeding.",
-        "action":      {"type": "tool_call", "name": "verify_auth", "args": {"uid": "usr_992"}},
-        "observation": "AUTHORIZED"
-      },
-      {
-        "thought":     "Auth confirmed. Fetching user data.",
-        "action":      {"type": "tool_call", "name": "fetch_data", "args": {"uid": "usr_992"}},
-        "observation": "Data returned."
-      }
+      {"thought": "Verifying auth first.",
+       "action": {"name": "verify_auth", "args": {"uid": "usr_992"}},
+       "observation": "AUTHORIZED"},
+      {"thought": "Auth confirmed. Fetching user data.",
+       "action": {"name": "fetch_data", "args": {"uid": "usr_992"}},
+       "observation": "Data returned."}
     ]
   }'`,
     lang: 'bash',

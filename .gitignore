@@ -1,39 +1,48 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.egg-info/
-dist/
+.eggs/
 build/
+dist/
 
-# Virtual Environment
+# Virtual environments
 venv/
-.venv/
+.venv*/
 
-# Environment Variables (secrets)
+# Secrets: only the template is committed
 .env
+.env.*
+!.env.example
 
-# Reports (generated at runtime)
+# Written by `regshield eval` and the dashboard
 reports/
 
-# Testing & Caches
+# Test and lint caches
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
+.tox/
+.nox/
 .mypy_cache/
 .ruff_cache/
 
-# Node / Next.js / Website
+# Website (Next.js)
 node_modules/
 .next/
 out/
+.vercel/
+*.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# IDE
+# Editors and local tools
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 

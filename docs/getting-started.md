@@ -2,13 +2,13 @@
 
 ## Install
 
-RegShield isn't on PyPI yet. Every [GitHub release](https://github.com/SubodhSenpai/RegShield/releases/latest) carries the built package, and pip installs it straight from GitHub:
+Not on PyPI yet. pip installs the [latest release](https://github.com/SubodhSenpai/RegShield/releases/latest) from GitHub:
 
 ```bash
 pip install https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl
 ```
 
-A framework integration needs its extra, in square brackets before the `@`:
+Framework integrations need an extra, before the `@`:
 
 ```bash
 pip install "regression-shield[langchain] @ https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl"
@@ -22,17 +22,17 @@ pip install "regression-shield[langchain] @ https://github.com/SubodhSenpai/RegS
 | `otel` | Export to OpenTelemetry |
 | `all` | All of the above |
 
-Other ways to install the same release:
+Other ways to install:
 
-- **From the file:** download the `.whl` from the [release page](https://github.com/SubodhSenpai/RegShield/releases/latest) and `pip install` it. pip still downloads RegShield's dependencies, such as httpx, from PyPI.
+- **From the file:** download the `.whl` from the [release page](https://github.com/SubodhSenpai/RegShield/releases/latest) and `pip install` it.
 - **From source, with git:** `pip install "git+https://github.com/SubodhSenpai/RegShield@v0.5.0"`
 - **In `requirements.txt`, or under `dependencies` in `pyproject.toml`:** `regression-shield @ https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl`
 
-RegShield needs Python 3.10 or newer. The core checks run offline and need no API key.
+Needs Python 3.10+. The core checks run offline, with no API key.
 
 ## 1. Describe what the agent should do
 
-A **scenario** is a dict (or JSON object) of rules. Every field except `scenario_id` is optional, and a check runs only when its field is set:
+A **scenario** is a dict of rules. Only `scenario_id` is required; each check runs when its field is set:
 
 ```python
 scenario = {
@@ -45,11 +45,11 @@ scenario = {
 }
 ```
 
-A misspelled field name raises an error instead of being ignored. Put your own data under `metadata`. See the [reference](reference.md#scenario-fields) for every field.
+Misspelled fields raise an error. Your own data goes under `metadata`. [Every field](reference.md#scenario-fields).
 
 ## 2. Capture what the agent did
 
-A **trace** is the list of steps the agent took. Each step has an action, what came back, and optionally the reasoning before it:
+A **trace** is the agent's steps: an action, its result, and optionally the reasoning:
 
 ```python
 trace = [
@@ -62,7 +62,7 @@ trace = [
 ]
 ```
 
-You rarely write traces by hand. Record them from a real run:
+In practice, record them from a real run:
 
 ```python
 # LangChain or LangGraph
@@ -110,7 +110,7 @@ Failures:
   - Call ordering 0.00 < 1.00: 'deploy_production' (step 1) ran before its prerequisite 'run_unit_tests' (step 2)
 ```
 
-Thresholds are keyword arguments, for example `evaluate_trace(scenario, trace, min_step_efficiency=0.5)`. Add `verbose=True` to see every check as it runs.
+Thresholds are keyword arguments (`min_step_efficiency=0.5`). Add `verbose=True` to see every check.
 
 ## 4. Test it
 
@@ -124,13 +124,13 @@ def test_deploy_gate():
     evaluate_trace(scenario, trace).raise_for_failures()
 ```
 
-LLM agents don't behave the same on every run. Run important scenarios several times, or on a set of inputs, and look at the pass rate: `evaluate_runs(scenario, traces)` evaluates the runs together and fails unless enough of them pass ([recipe](cookbook.md#run-the-agent-several-times)).
+Agents vary between runs. `evaluate_runs(scenario, traces)` checks several runs and their pass rate ([recipe](cookbook.md#run-the-agent-several-times)).
 
-Thresholds and judge settings shared by your tests and CI can go in `pyproject.toml` under `[tool.regshield]` ([configuration](reference.md#configuration-file)).
+Shared settings go in `pyproject.toml` under `[tool.regshield]` ([configuration](reference.md#configuration-file)).
 
 ## 5. Gate your CI
 
-Save scenarios with recorded traces in a JSON file. `regression_trace` is optional: a known-bad trace the scenario must catch.
+Save scenarios and recorded traces in a JSON file. `regression_trace` (optional) is a known-bad trace the scenario must catch.
 
 ```json
 [
@@ -152,7 +152,7 @@ regshield eval scenarios.json    # exit code 0 all passed, 1 something failed, 2
 regshield demo                   # the bundled samples, one per pattern
 ```
 
-A run fails when a scenario fails, or when a `regression_trace` passes (the scenario doesn't catch that regression).
+A run fails when a scenario fails, or a `regression_trace` passes.
 
 GitHub Actions:
 
@@ -177,15 +177,15 @@ jobs:
 regshield serve
 ```
 
-The dashboard at `http://localhost:8000` shows each scenario's metrics, pattern checks and full trace. It reads `reports/latest_report.json` in the folder you start it from; `regshield eval` writes that file, and so does `evaluate_trace(..., save_report=True)`. It runs on your machine only: no account, nothing uploaded.
+The dashboard at `http://localhost:8000` shows each scenario's metrics, checks and trace, from `reports/latest_report.json` (written by `regshield eval` or `save_report=True`). Local only, nothing uploaded.
 
 ![The RegShield dashboard showing a failed scenario and the rules it broke](images/dashboard.png)
 
 ## Next
 
-- Ready-made checks for common problems: [Cookbook](cookbook.md)
-- Plans, handoffs, approvals, routers, graphs or critique loops: [Agentic patterns](patterns.md)
-- Framework details: [Integrations](integrations.md)
-- Nine real agents run against a local LLM: [Examples](../examples/README.md)
-- Run your agent and the LLM judge on your own GPU instead of a paid API: [Local and self-hosted models](local-models.md)
-- Guard agents while they run, and send runs to your monitoring: [In production](production.md)
+- [Cookbook](cookbook.md): ready-made checks
+- [Agentic patterns](patterns.md): plans, handoffs, approvals, graphs
+- [Integrations](integrations.md): framework details
+- [Examples](../examples/README.md): nine real agents on a local LLM
+- [Local and self-hosted models](local-models.md): your own GPU instead of a paid API
+- [In production](production.md): guard and monitor running agents

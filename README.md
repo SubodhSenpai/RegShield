@@ -1,293 +1,210 @@
-<div align="center">
-
 # RegShield
 
-**Regression tests for what your AI agent *does*, not just what it says.**
+RegShield tests AI agents by what they do. Give it a trace of your agent's run (tool calls, arguments, results, handoffs, approvals) and the rules the run should follow. It tells you which rule broke and at which step. The checks are deterministic, run offline in milliseconds, and fit into pytest or CI. In production, the same rules block risky actions while the agent runs. It works with paid APIs and with models you host yourself.
 
-Check every tool call, handoff, approval and plan your agent makes, in CI, before a prompt or model change reaches production.
-
-[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0-18181b)](pyproject.toml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-16a34a)](LICENSE)
-[![Core checks](https://img.shields.io/badge/core%20checks-offline%2C%20no%20API%20key-2563eb)](#how-it-works)
-[![Works with](https://img.shields.io/badge/works%20with-LangChain%20%C2%B7%20LangGraph%20%C2%B7%20smolagents%20%C2%B7%20any%20loop-7c3aed)](docs/integrations.md)
-
-[Quickstart](#quickstart) · [Patterns](#agentic-patterns) · [Integrations](#integrations) · [CI](#use-it-in-ci-and-pytest) · [Dashboard](#local-dashboard) · [Examples](examples/README.md) · [Docs](docs/README.md)
-
-</div>
-
----
-
-## Why
-
-Most evals grade an agent's final answer. But agents act: they move money, change records, deploy code. A prompt tweak can keep the answer sounding right while the agent:
-
-- deploys **before** the tests run
-- sends a payment in the **same batch** as the identity check it depends on
-- calls a tool it must **never** touch, or acts after a person **rejected** the action
-- tells the user *"your refund was processed"* when the refund **never ran**
-- hands work to the **wrong** agent, or loops between agents
-
-RegShield checks the **execution trace** (each thought, tool call and result) against rules you write once. The core checks are deterministic, run offline in milliseconds and need no LLM.
-
-## Quickstart
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-16a34a)](https://github.com/SubodhSenpai/RegShield/blob/main/LICENSE)
 
 ```bash
 pip install regression-shield
 ```
+
+## Example
+
+An agent deployed to production before running the tests:
 
 ```python
 from regression_shield import evaluate_trace
 
 scenario = {
     "scenario_id": "deploy_gate",
-    "title": "Tests before deploy",
-    "expected_tools": ["run_unit_tests", "deploy_production"],
-    "expected_order": ["run_unit_tests", "deploy_production"],        # tests before deploy
-    "expected_arguments": {"deploy_production": {"env": "staging"}},
-    "forbidden_tools": ["drop_database"],                              # never allowed
+    "expected_order": ["run_tests", "deploy"],
+    "expected_arguments": {"deploy": {"env": "staging"}},
 }
-
 trace = [
-    {"thought": "Run the tests first.",
-     "action": {"name": "run_unit_tests", "args": {}}, "observation": "42 passed"},
-    {"thought": "Tests pass, deploying to staging.",
-     "action": {"name": "deploy_production", "args": {"env": "staging"}}, "observation": "DEPLOYED"},
+    {"action": {"name": "deploy", "args": {"env": "prod"}}, "observation": "DEPLOYED"},
+    {"action": {"name": "run_tests", "args": {}}, "observation": "42 passed"},
 ]
-
-report = evaluate_trace(scenario, trace)
-print(report.passed, report.composite_score)   # True 1.0
+print(evaluate_trace(scenario, trace).format())
 ```
 
-When the agent regresses (deploying to `prod` before testing), `print(report.format())` says exactly what went wrong:
-
 ```text
-FAILED  deploy_gate  Tests before deploy  (composite 0.55)
+FAILED  deploy_gate  (composite 0.55)
   tool_selection          1.00
   argument_correctness    0.00
   call_ordering           0.00
   step_efficiency         1.00
   reasoning_faithfulness  1.00
-  pattern checks: Policy PASS
 Failures:
-  - Argument correctness 0.00 < 0.85: deploy_production.env was 'prod', expected 'staging'
-  - Call ordering 0.00 < 1.00: 'deploy_production' (step 1) ran before its prerequisite 'run_unit_tests' (step 2)
+  - Argument correctness 0.00 < 0.85: deploy.env was 'prod', expected 'staging'
+  - Call ordering 0.00 < 1.00: 'deploy' (step 1) ran before its prerequisite 'run_tests' (step 2)
 ```
 
-You rarely write traces by hand: the [integrations](#integrations) record them from a real run. To see ten scenarios with no code at all, run `regshield demo`.
+In practice you don't write traces by hand: the [integrations](#record-your-agent) record them from a real run.
 
-## How it works
+## What it checks
 
-Each trace is scored on five metrics. A metric below its threshold, or any failing pattern check, fails the scenario.
+Each trace gets five scores. A score below its threshold fails the scenario.
 
-| Metric | Weight | Checks that | Default threshold |
-|---|:---:|---|:---:|
-| Tool selection (F1) | 25% | The expected tools ran, and no others (scored when `expected_tools` is set) | 0.85 |
-| Argument correctness | 25% | Tools got the expected values (numbers compare numerically; text ignores case, `_` and `-`) | 0.85 |
-| Call ordering | 20% | Prerequisites finished before the tools that depend on them | 1.00 |
-| Step efficiency | 15% | No repeated calls or extra steps | 0.70 |
-| Reasoning faithfulness | 15% | No claim of success right after a failed call or a denied approval | 0.85 |
+| Score | Fails when | Default threshold |
+|---|---|:---:|
+| Tool selection | expected tools didn't run, or unexpected ones did (F1) | 0.85 |
+| Argument correctness | a tool got the wrong values | 0.85 |
+| Call ordering | a tool ran before its prerequisite | 1.00 |
+| Step efficiency | the agent repeated calls or took extra steps | 0.70 |
+| Reasoning faithfulness | it claimed success the trace contradicts: right after an error or a denied approval, about a call that failed, or about a call that never ran (in its answer, its reasoning, or a message it sent) | 0.85 |
 
-Every threshold can be changed. For example, to require a tool selection F1 of 0.94 instead of 0.85:
+You can change every threshold: `evaluate_trace(scenario, trace, min_tool_selection=0.94)`, or `--min-tool-selection 0.94` on the command line. The others are `min_argument_correctness`, `min_call_ordering`, `min_step_efficiency` and `min_reasoning_faithfulness`.
+
+Pattern checks cover how agents are built. Each one runs when the scenario sets its fields or the trace contains its events:
+
+| Pattern | Scenario fields |
+|---|---|
+| Policy: forbidden tools, call limits, dangerous arguments, prerequisites that must succeed | `forbidden_tools`, `max_tool_calls`, `forbidden_arguments`, `prerequisites` |
+| Human approval | `requires_approval` |
+| Plan-and-execute | `require_plan`, `expected_plan` |
+| Multi-agent handoffs | `agent_tools`, `expected_agents`, `max_handoffs` |
+| Routing | `expected_route` |
+| Parallel calls | `expected_parallel` |
+| Graph workflows | `allowed_transitions`, `max_node_visits` |
+| Writer and critic loops | `max_revision_rounds` |
+| Budget: cost, tokens, model calls | `max_cost_usd`, `max_tokens`, `max_llm_calls` |
+
+Add a check to `warn_only` to report it without failing, while you tune it.
+
+## Cost tracking
+
+The integrations record each model call's token usage with the trace, and `report.cost` shows what the run cost. Calls are priced from a bundled snapshot of public list prices, or the real cost when the provider reports it (OpenRouter), or your own prices. Set a budget per scenario to catch a prompt change that doubles the tokens, or an agent that loops:
 
 ```python
-report = evaluate_trace(scenario, trace, min_tool_selection=0.94)
+evaluate_trace({"scenario_id": "triage", "max_cost_usd": 0.05, "max_llm_calls": 8}, handler)
 ```
 
-```bash
-regshield eval scenarios.json --min-tool-selection 0.94
-```
+For your own loop, call `recorder.llm_response(response)` after each model call. Paid tools can carry a price too: `@recorder.tool(cost_usd=0.005)`. `regshield pricing refresh` downloads the latest list prices. See [Cost tracking](https://github.com/SubodhSenpai/RegShield/blob/main/docs/reference.md#cost-tracking).
 
-The options are `min_tool_selection`, `min_argument_correctness`, `min_call_ordering`, `min_step_efficiency` and `min_reasoning_faithfulness`. They work the same way in `AgentTraceEvaluator(...)`, `@shield(...)` and the REST API. The CLI flags use dashes instead of underscores.
+## In production
 
-<details>
-<summary><b>How the faithfulness check decides, and when to add the LLM judge</b></summary>
-<br>
-
-The check is rule-based. A thought or final answer that claims success ("succeeded", "completed", "has been processed", "all set"...) right after a tool result reporting an error, or right after a person denied an action, is flagged. Negations ("was not processed") and wording that acknowledges the failure ("the refund was rejected") are not.
-
-Rules can't read meaning: an answer saying "refunded $500" when the tool refunded $50 passes them. For that, add the [LLM judge](#optional-llm-judge).
-
-</details>
-
-## Agentic patterns
-
-Beyond one agent calling tools, RegShield checks the patterns production agents are built from. A pattern check runs when your scenario configures it or the trace contains its events, and appears in the report only if it checked something.
-
-| Pattern | Catches | Scenario fields |
-|---|---|---|
-| **Policy** | Forbidden tools, too many calls to a tool | `forbidden_tools`, `max_tool_calls` |
-| **Human approval** | Risky tools run without approval, or after a denial | `requires_approval` |
-| **Plan-and-execute** | No plan, calls outside the plan, pushing on after a failure without replanning | `require_plan`, `expected_plan` |
-| **Multi-agent** | An agent using another agent's tools, wrong delegation order, handoff loops | `agent_tools`, `expected_agents`, `max_handoffs` |
-| **Routing** | Requests sent to the wrong place, with accuracy across a test set | `expected_route` |
-| **Parallel calls** | Independent calls run one by one; dependent calls run at the same time | `expected_parallel`, `expected_order` pairs |
-| **Graph workflows** | Transitions the graph shouldn't take, runaway cycles | `allowed_transitions`, `max_node_visits` |
-| **Evaluator-optimizer** | Ignored critiques, shipping a rejected draft, too many rounds | `max_revision_rounds` |
-
-In your own code, record events with a `TraceRecorder`:
+The rules you test with can also protect the running agent:
 
 ```python
-from regression_shield import TraceRecorder, evaluate_trace
+import regression_shield as rs
 
-recorder = TraceRecorder(agent="triage_agent")
+guard = rs.Guard(scenario, rate_limits={"send_email": "10/minute"})       # the same scenario as your tests
+rs.instrument()                                                           # record OpenAI, Anthropic, Gemini SDK calls
+rs.export_traces(rs.OpenTelemetryExporter(endpoint="http://localhost:4318"), sample_rate=0.1)
 
-@recorder.tool                       # records arguments, result or error
-def issue_refund(order_id: str, amount: float) -> dict:
-    return {"status": "REFUNDED", "amount": amount}
-
-recorder.handoff("billing_agent")                                       # multi-agent
-recorder.approval("issue_refund", approved=True, by="lead@example.com")  # human approval
-issue_refund("ORD-7731", 89.0)
-
-report = evaluate_trace({
-    "scenario_id": "refund",
-    "requires_approval": ["issue_refund"],
-    "agent_tools": {"billing_agent": ["issue_refund"]},
-}, recorder)
+with rs.TraceRecorder(guard=guard) as recorder:
+    answer = run_my_agent(question)
 ```
 
-[Guide to every pattern](docs/patterns.md)
+What this setup gives you:
 
-## Integrations
+- **Blocking:** a call that breaks a rule doesn't run. The agent is told why, the attempt is recorded, and a run that uses up its budget stops.
+- **Zero-code capture:** `instrument()` records raw SDK loops without code changes. LangChain agents use `handler.middleware()`, and smolagents uses `instrument_smolagents`.
+- **Export:** runs stream to any OpenTelemetry backend, a JSONL file or a webhook. Sampling and rate limits keep volumes down, and runs with problems are always kept.
 
-| Framework | How | Recorded automatically |
-|---|---|---|
-| **LangChain / LangGraph** | `RegressionShieldCallbackHandler()` as a callback | Tool calls, errors, reasoning, final answer, graph nodes, parallel calls and fan-out, agents and `transfer_to_*` handoffs (supervisor, swarm), `HumanInTheLoopMiddleware` approvals |
-| **smolagents** | `instrument_smolagents(agent)` before `agent.run` | Tool calls from `CodeAgent` code and `ToolCallingAgent`, errors, reasoning, final answer, parallel calls, managed agents as handoffs |
-| **Anything else** (OpenAI SDK, CrewAI, AutoGen, your own loop) | `TraceRecorder`: wrap tools, call one method per event | Tool calls you wrap, plus the events you record |
-| **Any language** | `POST /api/evaluate-trace` on `regshield serve` | Whatever you send |
+See [In production](https://github.com/SubodhSenpai/RegShield/blob/main/docs/production.md).
+
+## Record your agent
 
 ```python
-from regression_shield import RegressionShieldCallbackHandler, evaluate_trace
+from regression_shield import (RegressionShieldCallbackHandler, TraceRecorder, evaluate_trace, instrument,
+                               instrument_smolagents)
 
+# LangChain agents and LangGraph graphs: one callback
 handler = RegressionShieldCallbackHandler()
-app.invoke(inputs, config={"callbacks": [handler]})     # an agent, chain or compiled graph
+app.invoke(inputs, config={"callbacks": [handler]})
 report = evaluate_trace(scenario, handler)
-```
 
-```python
-from regression_shield import evaluate_trace, instrument_smolagents
-
-recorder = instrument_smolagents(agent)   # CodeAgent or ToolCallingAgent
+# smolagents (CodeAgent or ToolCallingAgent): instrument before the run
+recorder = instrument_smolagents(agent)
 agent.run(task)
 report = evaluate_trace(scenario, recorder)
+
+# Your own loop on the OpenAI, Anthropic or Gemini SDK: no changes to it
+instrument()
+with TraceRecorder() as recorder:
+    run_my_agent(task)
+report = evaluate_trace(scenario, recorder)
+
+# Anything else: wrap your tools, then evaluate the recorder the same way
+recorder = TraceRecorder()
+search = recorder.wrap(search)
 ```
 
-[Integration guide](docs/integrations.md) · [Runnable examples with a local LLM](examples/README.md)
+The LangChain handler also records graph nodes, parallel calls, sub-agents, `transfer_to_*` handoffs and `HumanInTheLoopMiddleware` approvals. Install the extra you need: `pip install "regression-shield[langgraph]"` (or `[langchain]`, `[smolagents]`, `[otel]`, `[all]`).
 
-## Use it in CI and pytest
+## Local models or paid APIs
 
-**Pytest.** `raise_for_failures()` fails the test with every reason:
+Use whatever suits you. RegShield records your agent the same way whether it calls OpenAI, Anthropic, Gemini or OpenRouter, or a model on your own GPU through Ollama, vLLM, LM Studio or llama.cpp:
+
+```bash
+ollama pull qwen2.5:7b      # after installing Ollama from ollama.com
+```
+
+```python
+client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")   # your agent, on a local model
+```
+
+Local models cost nothing per token in `report.cost`, while paid models are priced from list prices. The optional LLM judge can run locally too, with no API key (below). See [Local and self-hosted models](https://github.com/SubodhSenpai/RegShield/blob/main/docs/local-models.md) for the full setup.
+
+## Run it in tests and CI
 
 ```python
 def test_deploy_gate():
-    evaluate_trace(scenario, run_my_agent("Deploy to staging")).raise_for_failures()
+    evaluate_trace(SCENARIO, run_my_agent("Deploy to staging")).raise_for_failures()
 ```
 
-```text
-EvaluationFailed: deploy_gate failed:
-  - Call ordering 0.00 < 1.00: 'deploy_production' (step 1) ran before its prerequisite 'run_unit_tests' (step 2)
-```
+Or keep scenarios and recorded traces in a JSON file and run `regshield eval scenarios.json` in CI. It exits with 1 when a scenario fails, and also when a known-bad `regression_trace` passes, since that scenario can't catch the regression. See [Gate pull requests](https://github.com/SubodhSenpai/RegShield/blob/main/docs/cookbook.md#gate-pull-requests) for a GitHub Actions workflow. Add `--verbose` to see every check as it runs.
 
-**Scenario files.** Save scenarios with recorded traces in a JSON file and gate every pull request:
+Agents don't behave the same on every run. `evaluate_runs(scenario, traces)` checks several runs of the same task and reports the pass rate; in a scenario file, give an item `traces` instead of `trace`.
 
-```json
-[
-  {
-    "scenario": {"scenario_id": "deploy_gate", "expected_order": ["run_unit_tests", "deploy_production"]},
-    "trace": [
-      {"action": {"name": "run_unit_tests", "args": {}}, "observation": "42 passed"},
-      {"action": {"name": "deploy_production", "args": {"env": "staging"}}, "observation": "DEPLOYED"}
-    ],
-    "regression_trace": [
-      {"action": {"name": "deploy_production", "args": {"env": "staging"}}, "observation": "DEPLOYED"}
-    ]
-  }
-]
-```
+Every setting can live in one file (thresholds, the judge, prices, logs, export), so tests, CI and production share it. Start one with `regshield config init`, then check what's in effect with `regshield config show`. API keys stay out of that file, in the environment or a `.env` it loads (`env_file = ".env"`). Any setting can be overridden with `REGSHIELD_<SETTING>`. See [Configuration](https://github.com/SubodhSenpai/RegShield/blob/main/docs/reference.md#configuration-file).
 
-```bash
-regshield eval scenarios.json       # exit code 0 all pass, 1 a scenario failed, 2 bad input
-```
-
-`regression_trace` is optional: a known-bad trace the scenario must catch. If it passes, the run fails too, because the scenario is too weak to catch that regression.
-
-```yaml
-# .github/workflows/agent-gate.yml
-name: Agent quality gate
-on: [pull_request]
-jobs:
-  gate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install regression-shield
-      - run: regshield eval scenarios.json
-```
-
-## Logs
-
-Add `--verbose` (CLI), `verbose=True` (Python) or `REGSHIELD_LOG=debug` (anywhere) to see every metric, pattern check and judge call:
-
-```text
-[regshield] DEBUG   evaluator: Evaluating 'deploy_gate': 2 steps, 2 tool calls
-[regshield] DEBUG   evaluator:   call_ordering          1.00
-[regshield] DEBUG   patterns:   pattern policy          PASSED (1.00)
-[regshield] INFO    evaluator: 'deploy_gate' PASSED (composite 1.00) in 0.4 ms
-```
-
-Logs go to stderr, so stdout stays clean for scripts and CI.
-
-## Local dashboard
+## Dashboard
 
 ```bash
 regshield serve
 ```
 
-Opens `http://localhost:8000` with each scenario's metrics, pattern checks and step-by-step trace, read from `reports/latest_report.json`. `regshield eval` writes that file; in Python, pass `save_report=True`. **Run demo** evaluates the bundled samples, and **Baseline vs. Regression** shows which known-bad traces were caught.
+![The RegShield dashboard showing a failed scenario and the rules it broke](https://raw.githubusercontent.com/SubodhSenpai/RegShield/main/docs/images/dashboard.png)
 
-> [!IMPORTANT]
-> The dashboard accepts connections from your own machine only and never serves files from disk. It ignores API keys or endpoints sent in requests. `--host 0.0.0.0` exposes it to your network with no authentication, so use it only on networks you trust.
+`regshield serve` opens `http://localhost:8000`, with each scenario's scores, pattern checks and steps, and every known-bad trace next to the one that passed. It reads `reports/latest_report.json`, which `regshield eval` and `evaluate_trace(..., save_report=True)` write. It runs on your machine only and has no login; `--host 0.0.0.0` would expose it to your network.
 
-## Optional LLM judge
+## LLM judge (optional)
 
-An LLM reads the whole trace to catch what rules can't, like reporting the wrong amount. It works with any OpenAI-compatible API, including a local Ollama server.
+Rules can't tell that "refunded $500" is wrong when the tool refunded $50. The LLM judge reads the whole trace and can. It works with any OpenAI-compatible API, paid or your own:
 
 ```bash
-export OPENROUTER_API_KEY=sk-or-...     # sent to OpenRouter
-# or: export OPENAI_API_KEY=sk-...      # sent to OpenAI (default model gpt-4.1-mini)
+# A paid API
+export OPENROUTER_API_KEY=sk-or-...     # or OPENAI_API_KEY for OpenAI
 regshield eval scenarios.json --llm-judge
+
+# Your own model: no key needed
+regshield eval scenarios.json --llm-judge --base-url http://localhost:11434/v1 --model qwen2.5:7b
 ```
 
-Set `JUDGE_MODEL` and `OPENROUTER_BASE_URL` / `OPENAI_BASE_URL` (or `--model`, `--base-url`) to choose another model or endpoint. Once enabled, the judge must return a verdict: a rate limit or unusable reply fails the scenario, unless you pass `--judge-on-error pass`. RegShield reads keys from the environment and does not load `.env` files.
+To make it permanent, set `llm_judge`, `judge_base_url` and `judge_model` in `[tool.regshield]` (see [Local and self-hosted models](https://github.com/SubodhSenpai/RegShield/blob/main/docs/local-models.md)). RegShield reads keys from the environment, or from a `.env` file your config names with `env_file`.
 
 ## Documentation
 
-| Guide | Contents |
-|---|---|
-| [Getting started](docs/getting-started.md) | Install, first scenario, capturing traces, CI |
-| [Agentic patterns](docs/patterns.md) | Every pattern, how to record it, and its violation messages |
-| [Integrations](docs/integrations.md) | LangChain, LangGraph, smolagents, `TraceRecorder`, `@shield`, REST |
-| [Reference](docs/reference.md) | Scenario fields, trace and report formats, CLI, environment variables, logging |
-| [Examples](examples/README.md) | Nine real agents, run against a local LLM |
+- [Getting started](https://github.com/SubodhSenpai/RegShield/blob/main/docs/getting-started.md)
+- [Cookbook](https://github.com/SubodhSenpai/RegShield/blob/main/docs/cookbook.md): recipes for common checks, each with its real output
+- [Agentic patterns](https://github.com/SubodhSenpai/RegShield/blob/main/docs/patterns.md)
+- [Integrations](https://github.com/SubodhSenpai/RegShield/blob/main/docs/integrations.md)
+- [In production](https://github.com/SubodhSenpai/RegShield/blob/main/docs/production.md): block risky actions, record SDK calls, export runs, refresh prices
+- [Local and self-hosted models](https://github.com/SubodhSenpai/RegShield/blob/main/docs/local-models.md): install Ollama, run the agent and the judge on your own GPU or servers
+- [Reference](https://github.com/SubodhSenpai/RegShield/blob/main/docs/reference.md): every scenario field, CLI flag and environment variable
+- [Examples](https://github.com/SubodhSenpai/RegShield/tree/main/examples): nine agents run against a local LLM
 
 ## Development
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate                 # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-pytest                                    # offline, no API keys needed
-ruff check .
-python -m build                           # dist/*.whl and dist/*.tar.gz
+pytest              # offline, no API keys needed
+ruff check . && mypy
 ```
-
-The `test` extra (included in `dev`) installs LangChain, LangGraph, langgraph-supervisor and smolagents, so the integration tests run real agents offline with scripted models.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/SubodhSenpai/RegShield/blob/main/LICENSE)

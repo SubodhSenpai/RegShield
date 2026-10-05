@@ -16,18 +16,25 @@ for LangGraph, fills in agentic-pattern information automatically:
 
 The handler is also a ``TraceRecorder``, so you can add any other pattern event
 (``plan``, ``route``, ``draft``, ``critique``, ``approval``...) to the same trace.
+
+Give it a ``Guard`` to block risky calls while the agent runs: add
+``handler.middleware()`` to ``create_agent(..., middleware=[...])``, or pass
+``wrap_tool_call=handler.wrap_tool_call`` to a LangGraph ``ToolNode``.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import time
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
 
 from regression_shield.core.patterns import event_type, is_tool_call
-from regression_shield.recorder import TraceRecorder
+from regression_shield.guard import ActionBlocked, Guard, blocked_observation
+from regression_shield.recorder import TraceRecorder, usage_from_response
 
 try:
     # LangChain's callback manager requires this base class (it reads
@@ -81,13 +88,18 @@ class RegressionShieldCallbackHandler(BaseCallbackHandler, TraceRecorder):
     graph (``Command(resume=...)``), which continues the same trace.
     """
 
-    def __init__(self, agent: str | None = None):
-        TraceRecorder.__init__(self, agent=agent)
+    # The callbacks record model calls, so instrument() leaves this recorder alone
+    sdk_capture = False
+
+    def __init__(self, agent: str | None = None, *, guard: Guard | None = None):
+        TraceRecorder.__init__(self, agent=agent, guard=guard)
 
     def reset(self) -> None:
         TraceRecorder.reset(self)
         self._thoughts: dict[str, str] = {}               # scope -> latest model text
         self._llm_scopes: dict[UUID, str] = {}             # model run -> scope
+        self._llm_models: dict[UUID, str] = {}             # model run -> model name it was called with
+        self._llm_started: dict[UUID, float] = {}          # model run -> when it started
         self._tool_runs: dict[UUID, dict[str, Any]] = {}   # tool calls in progress
         self._node_visits: set[Any] = set()
         self._interrupts: set[Any] = set()
@@ -140,9 +152,15 @@ class RegressionShieldCallbackHandler(BaseCallbackHandler, TraceRecorder):
         self._add({"type": "node", "name": node}, **context)
 
     def on_chain_end(self, outputs: Any, *, run_id: UUID, parent_run_id: UUID | None = None, **kwargs: Any) -> None:
-        """At the end of a top-level run, keep the agent's final answer (checked for hallucinated success)."""
-        if parent_run_id is not None or not isinstance(outputs, dict):
+        """At the end of a top-level run, keep the agent's final answer (checked for hallucinated
+        success), and finish the exported run."""
+        if parent_run_id is not None:
             return
+        if isinstance(outputs, dict):
+            self._keep_final_answer(outputs)
+        self.end_run()
+
+    def _keep_final_answer(self, outputs: dict[str, Any]) -> None:
         if isinstance(outputs.get("output"), str):  # AgentExecutor
             self.final_answer(outputs["output"])
             return
@@ -155,8 +173,11 @@ class RegressionShieldCallbackHandler(BaseCallbackHandler, TraceRecorder):
             return
 
     def on_chain_error(self, error: BaseException, **kwargs: Any) -> None:
+        interrupted = type(error).__name__ == "GraphInterrupt"
+        if kwargs.get("parent_run_id") is None and "run_id" in kwargs:
+            self.end_run(error=None if interrupted else error)  # a top-level run ended
         # HumanInTheLoopMiddleware pauses the graph with an interrupt listing the calls to review
-        if type(error).__name__ != "GraphInterrupt" or not error.args:
+        if not interrupted or not error.args:
             return
         for interrupt in error.args[0]:
             value = getattr(interrupt, "value", None)
@@ -174,23 +195,55 @@ class RegressionShieldCallbackHandler(BaseCallbackHandler, TraceRecorder):
             self.approval(tool, approved=kind in _APPROVING_DECISIONS, by="human")
         self._pending_approvals = []
 
+    def _start_model(self, run_id: UUID, metadata: dict[str, Any] | None, kwargs: dict[str, Any]) -> None:
+        self._llm_scopes[run_id] = _scope(metadata or {})
+        self._llm_started[run_id] = time.time()
+        params = kwargs.get("invocation_params") or {}
+        model = (params.get("model") or params.get("model_name") or params.get("model_id")
+                 or (metadata or {}).get("ls_model_name"))
+        if model:
+            self._llm_models[run_id] = str(model)
+
     def on_chat_model_start(self, serialized: dict[str, Any] | None, messages: Any, *, run_id: UUID,
                             metadata: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        self._llm_scopes[run_id] = _scope(metadata or {})
+        self._start_model(run_id, metadata, kwargs)
 
     def on_llm_start(self, serialized: dict[str, Any] | None, prompts: Any, *, run_id: UUID,
                      metadata: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        self._llm_scopes[run_id] = _scope(metadata or {})
+        self._start_model(run_id, metadata, kwargs)
 
     def on_llm_end(self, response: Any, *, run_id: UUID, **kwargs: Any) -> None:
-        """Keep the model's text; it becomes the thought of the tool calls that follow."""
+        """Keep the model's text (it becomes the thought of the tool calls that follow)
+        and the call's token usage (for cost tracking)."""
         scope = self._llm_scopes.pop(run_id, "")
+        model_hint = self._llm_models.pop(run_id, None)
+        started = self._llm_started.pop(run_id, None)
         try:
-            text = (getattr(response.generations[0][0], "text", "") or "").strip()
-        except (AttributeError, IndexError):
+            generation = response.generations[0][0]
+        except (AttributeError, IndexError, TypeError):
             return
+        text = (getattr(generation, "text", "") or "").strip()
         if text:
             self._thoughts[scope] = text
+        self._record_usage(response, generation, scope, model_hint, started)
+
+    def _record_usage(self, response: Any, generation: Any, scope: str, model_hint: str | None,
+                      started: float | None = None) -> None:
+        message = getattr(generation, "message", None)
+        usage = usage_from_response(message) if message is not None else None
+        llm_output = getattr(response, "llm_output", None) or {}
+        if usage is None and isinstance(llm_output.get("token_usage"), dict):  # completion-style LLMs
+            usage = usage_from_response({"usage": llm_output["token_usage"]})
+        if usage is None:
+            return
+        metadata = getattr(message, "response_metadata", None) or {}
+        reported = (metadata.get("token_usage") or {}).get("cost") if isinstance(metadata, dict) else None
+        if isinstance(reported, (int, float)) and not isinstance(reported, bool) and "cost_usd" not in usage:
+            usage["cost_usd"] = float(reported)  # OpenRouter reports what the call cost
+        model = (usage.pop("model", None) or (metadata.get("model_name") if isinstance(metadata, dict) else None)
+                 or llm_output.get("model_name") or model_hint or "unknown")
+        timing = (started, time.time()) if started is not None else None
+        self.llm_call(model, agent=scope or None, timing=timing, **usage)
 
     def on_tool_start(self, serialized: dict[str, Any] | None, input_str: str, *, run_id: UUID,
                       metadata: dict[str, Any] | None = None, inputs: dict[str, Any] | None = None,
@@ -201,6 +254,7 @@ class RegressionShieldCallbackHandler(BaseCallbackHandler, TraceRecorder):
             "args": _parse_args(input_str, inputs),
             "scope": _scope(metadata),
             "context": self._context(metadata),
+            "started": time.time(),
         }
 
     def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
@@ -216,11 +270,72 @@ class RegressionShieldCallbackHandler(BaseCallbackHandler, TraceRecorder):
             return
         thought = self._thoughts.pop(run["scope"], None)
         handoff = _HANDOFF_TOOL.match(run["name"])
+        timing = (run["started"], time.time())
         if handoff:
-            self._add({"type": "handoff", "to": handoff.group(1)}, thought, **run["context"])
+            self._add({"type": "handoff", "to": handoff.group(1)}, thought, timing=timing, **run["context"])
         else:
             self._add({"type": "tool_call", "name": run["name"], "args": run["args"]}, thought,
-                      observation=observation, **run["context"])
+                      timing=timing, observation=observation, **run["context"])
+
+    # -- the guard: LangChain agent middleware and LangGraph ToolNode -----------------
+
+    def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        """Check a tool call with the guard before it runs. A blocked call doesn't run: the
+        agent gets an error ``ToolMessage`` saying why. For a LangGraph
+        ``ToolNode(tools, wrap_tool_call=handler.wrap_tool_call)``; ``middleware()`` uses it too."""
+        blocked = self._blocked_tool_message(request)
+        return blocked if blocked is not None else handler(request)
+
+    async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
+        """Async version of ``wrap_tool_call``."""
+        blocked = self._blocked_tool_message(request)
+        return blocked if blocked is not None else await handler(request)
+
+    def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        """Stop the agent with ``ActionBlocked`` once the run's budget is used up."""
+        self.check_llm()
+        return handler(request)
+
+    async def awrap_model_call(self, request: Any, handler: Callable[[Any], Awaitable[Any]]) -> Any:
+        """Async version of ``wrap_model_call``."""
+        self.check_llm()
+        return await handler(request)
+
+    def _blocked_tool_message(self, request: Any) -> Any:
+        call = getattr(request, "tool_call", None) or {}
+        name = str(call.get("name") or getattr(getattr(request, "tool", None), "name", None) or "tool")
+        try:
+            self.check(name, call.get("args") or {})
+        except ActionBlocked as blocked:
+            from langchain_core.messages import ToolMessage
+
+            return ToolMessage(content=blocked_observation(blocked.reason), tool_call_id=str(call.get("id") or ""),
+                               name=name, status="error")
+        return None
+
+    def middleware(self) -> Any:
+        """LangChain agent middleware that applies this handler's guard:
+        ``create_agent(model, tools, middleware=[handler.middleware()])``. A blocked tool call
+        returns an error message to the agent instead of running; a used-up budget stops the
+        run with ``ActionBlocked``. Also pass the handler as a callback, to record the run."""
+        from langchain.agents.middleware import AgentMiddleware
+
+        recorder = self
+
+        class RegShieldGuard(AgentMiddleware):  # type: ignore[misc]
+            def wrap_tool_call(self, request: Any, handler: Any) -> Any:
+                return recorder.wrap_tool_call(request, handler)
+
+            async def awrap_tool_call(self, request: Any, handler: Any) -> Any:
+                return await recorder.awrap_tool_call(request, handler)
+
+            def wrap_model_call(self, request: Any, handler: Any) -> Any:
+                return recorder.wrap_model_call(request, handler)
+
+            async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+                return await recorder.awrap_model_call(request, handler)
+
+        return RegShieldGuard()
 
     # -- output ----------------------------------------------------------------------
 

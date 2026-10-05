@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RegShield Dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5.2 3.4 9.7 8 11 4.6-1.3 8-5.8 8-11V5z' fill='%2318181b'/%3E%3C/svg%3E">
   <meta name="description" content="Evaluation and observability dashboard for Agentic AI reasoning chains, tool calling accuracy, ReAct execution traces, and policy regressions." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -757,6 +758,47 @@
       color: var(--danger-dot);
       font-weight: bold;
     }
+    /* Warnings: checks listed in warn_only report here instead of failing */
+    .failures-box.warnings-box {
+      border-left-color: var(--warning);
+    }
+    .warnings-box .failures-list li::before {
+      color: var(--warning);
+    }
+
+    /* Tool calls a guard stopped, or let through in warn_only mode */
+    .badge-warn::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--warning);
+    }
+    .guard-note {
+      margin-top: 10px;
+      padding: 8px 12px;
+      font-size: 0.8rem;
+      line-height: 1.45;
+      color: var(--text-secondary);
+      background: var(--bg-subtle);
+      border-left: 3px solid var(--danger-dot);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    .guard-note.guard-warning {
+      border-left-color: var(--warning);
+    }
+
+    /* The LLM judge's verdict on a scenario */
+    .judge-card .final-answer-title {
+      flex-wrap: wrap;
+    }
+    .judge-score {
+      font-family: var(--font-mono);
+      font-weight: 800;
+      color: var(--text-primary);
+      margin-right: 8px;
+    }
 
     /* Delta Matrix Table */
     .table-container {
@@ -1067,8 +1109,8 @@
 
     <!-- Meta Status Bar -->
     <div class="meta-bar">
-      <div class="meta-item">
-        <span>LLM judge:</span>
+      <div class="meta-item" title="The judge this server uses for traces sent to /api/evaluate-trace. Reports your own code evaluated show their own judge's verdict.">
+        <span>Server's LLM judge:</span>
         <strong id="metaJudge">off</strong>
       </div>
       <div class="meta-item">
@@ -1340,6 +1382,7 @@
           document.getElementById("serverStatusText").textContent = `Connected (Port ${currentPort})`;
           const judge = data.llm_judge || {};
           document.getElementById("metaJudge").textContent = judge.enabled ? `on (${judge.model})` : "off";
+          return data;
         } else {
           throw new Error("Bad status response");
         }
@@ -1347,6 +1390,22 @@
         isServerOnline = false;
         document.getElementById("serverBadge").className = "server-badge offline";
         document.getElementById("serverStatusText").textContent = "Offline / File Mode";
+        return null;
+      }
+    }
+
+    // Fetch the report only when the server says it changed: new evaluations show up
+    // within one refresh, without downloading the report again and again
+    let lastReportVersion;
+    async function refreshIfChanged() {
+      const status = await checkServerStatus();
+      if (!status || !("report_updated" in status)) {  // offline, a file, or an older server
+        await fetchLatestReport();
+        return;
+      }
+      if (status.report_updated !== null && status.report_updated !== lastReportVersion) {
+        lastReportVersion = status.report_updated;
+        await fetchLatestReport();
       }
     }
 
@@ -1358,6 +1417,9 @@
           const res = await fetch("/api/latest-report", { cache: "no-store" });
           if (res.ok) {
             data = await res.json();
+          } else if (res.status === 404 && manual) {
+            showToast("No report yet: run `regshield eval`, the demo, or send a trace", "error");
+            return;
           }
         }
         
@@ -1468,7 +1530,11 @@
       bList.forEach(sc => {
         const pill = document.createElement("button");
         pill.className = `scenario-pill ${sc.scenario_id === selectedScenarioId ? 'active' : ''}`;
-        pill.innerHTML = `<span>${escapeHtml(sc.scenario_id)}</span> <span style="opacity: 0.4;">•</span> <span>${escapeHtml(sc.title.split(' ')[0])}</span>`;
+        const label = sc.title || sc.domain || "";
+        const shortLabel = label.length > 26 ? label.slice(0, 25) + "…" : label;
+        pill.title = label;
+        pill.innerHTML = `<span>${escapeHtml(sc.scenario_id)}</span>`
+          + (shortLabel ? ` <span style="opacity: 0.4;">•</span> <span>${escapeHtml(shortLabel)}</span>` : "");
         pill.onclick = () => {
           selectedScenarioId = sc.scenario_id;
           document.querySelectorAll(".scenario-pill").forEach(p => p.classList.remove("active"));
@@ -1633,15 +1699,29 @@
           const toolArgs = act.args || act.arguments || {};
           const thought = st.thought || "No internal thought recorded";
           const obs = st.observation || "No observation recorded";
+          // A guard stopped this call, or let it through in warn_only mode
+          const blocked = st.blocked && typeof st.blocked === "object" ? st.blocked : null;
+          const warned = st.guard_warning && typeof st.guard_warning === "object" ? st.guard_warning : null;
+          let guardBadges = "";
+          if (blocked) guardBadges += `<span class="badge badge-fail" title="${escapeHtml(blocked.reason || "")}">Blocked: ${escapeHtml(blocked.rule || "guard")}</span>`;
+          if (warned) guardBadges += `<span class="badge badge-warn" title="${escapeHtml(warned.reason || "")}">Guard warning: ${escapeHtml(warned.rule || "")}</span>`;
+          if (st.unconfirmed) guardBadges += `<span class="badge badge-domain" title="A model asked for this call, but its result never came back">Unconfirmed</span>`;
+          if (typeof st.cost_usd === "number") guardBadges += `<span class="ctx-tag" title="What this call cost">cost: $${st.cost_usd.toFixed(4)}</span>`;
+          const guardNote = blocked
+            ? `<div class="guard-note">Blocked by the guard before it ran (${escapeHtml(blocked.rule || "")}): ${escapeHtml(blocked.reason || "")}</div>`
+            : warned
+              ? `<div class="guard-note guard-warning">Would have been blocked (warn_only, ${escapeHtml(warned.rule || "")}): ${escapeHtml(warned.reason || "")}</div>`
+              : "";
 
           stepsHtml += `
             <div class="step-node">
               <div class="step-marker">${stepNum}</div>
               <div class="step-card">
                 <div class="step-header">
-                  <span class="step-title">Step ${stepNum} — Tool Call</span>
-                  <span class="step-context">${renderStepContext(st)}<span class="badge badge-domain">${escapeHtml(toolName)}</span></span>
+                  <span class="step-title">Step ${stepNum} — Tool Call${blocked ? " (blocked)" : ""}</span>
+                  <span class="step-context">${renderStepContext(st)}${guardBadges}<span class="badge badge-domain">${escapeHtml(toolName)}</span></span>
                 </div>
+                ${guardNote}
 
                 <div class="trace-section">
                   <div class="trace-header">
@@ -1703,6 +1783,55 @@
           </div>
         `;
       }
+      if (scenario.warnings && scenario.warnings.length > 0) {
+        failuresHtml += `
+          <div class="failures-box warnings-box">
+            <div class="failures-title">Warnings (warn_only, not failing)</div>
+            <ul class="failures-list">
+              ${scenario.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join("")}
+            </ul>
+          </div>
+        `;
+      }
+
+      // Tokens and cost, when the run recorded LLM usage or paid tool calls
+      let costHtml = "";
+      if (d.cost) {
+        const usd = Number(d.cost.total_usd || 0);
+        const money = usd < 100 ? usd.toFixed(4) : usd.toFixed(2);
+        const unpriced = (d.cost.unpriced_models || []).length
+          ? ` (no price for ${d.cost.unpriced_models.join(", ")})` : "";
+        // Per model and paid tool: what each cost, and local models marked as free
+        const breakdown = [
+          ...Object.entries(d.cost.models || {}).map(([name, u]) =>
+            `${name}: $${Number(u.usd || 0).toFixed(4)}${u.price_source === "local" ? " (local model, free)" : ""}`),
+          ...Object.entries(d.cost.tools || {}).map(([name, u]) => `${name}: $${Number(u.usd || 0).toFixed(4)} (${u.calls} paid calls)`),
+        ].join("\n");
+        costHtml = `
+            <div class="mini-metric" title="${escapeHtml(`${d.cost.llm_calls} LLM calls, ${Number(d.cost.total_tokens || 0).toLocaleString()} tokens${unpriced}\n${breakdown}`)}">
+              <span class="mini-metric-label">Cost${unpriced ? " (partial)" : ""}</span>
+              <span class="mini-metric-value">$${money}</span>
+            </div>`;
+      }
+
+      // The LLM judge's verdict, when the trace was judged
+      let judgeHtml = "";
+      const ja = scenario.judge_audit;
+      if (ja) {
+        const score = typeof ja.score === "number" ? ja.score.toFixed(2) : "n/a";
+        const verdict = ja.error
+          ? `<span class="badge badge-fail">Could not run</span>`
+          : `<span class="badge ${ja.passed ? "badge-pass" : "badge-fail"}">${ja.passed ? "Pass" : "Fail"}</span>`;
+        const tokens = ja.usage ? Number(ja.usage.input_tokens || 0) + Number(ja.usage.output_tokens || 0) : null;
+        const usage = tokens !== null
+          ? `${tokens.toLocaleString()} tokens${typeof ja.cost_usd === "number" ? ` · $${ja.cost_usd.toFixed(4)}` : ""}` : "";
+        judgeHtml = `
+          <div class="final-answer-card judge-card">
+            <div class="final-answer-title">LLM Judge ${verdict}<span class="badge badge-domain">${escapeHtml(ja.model || "")}</span></div>
+            <div class="final-answer-content"><span class="judge-score">${score}</span>${escapeHtml(ja.error || ja.reasoning || "")}</div>
+            ${usage ? `<div class="pattern-summary">${escapeHtml(usage)}</div>` : ""}
+          </div>`;
+      }
 
       let finalAnswerHtml = "";
       if (d.final_response) {
@@ -1725,9 +1854,9 @@
           <div class="sc-title-row">
             <div>
               <div class="sc-title">
-                ${escapeHtml(scenario.scenario_id)}: ${escapeHtml(scenario.title)}
+                ${escapeHtml(scenario.scenario_id)}${scenario.title ? `: ${escapeHtml(scenario.title)}` : ""}
                 ${statusBadge}
-                <span class="badge badge-domain">${escapeHtml(scenario.domain)}</span>
+                ${scenario.domain ? `<span class="badge badge-domain">${escapeHtml(scenario.domain)}</span>` : ""}
               </div>
             </div>
             <div style="text-align: right;">
@@ -1759,15 +1888,18 @@
               <span class="mini-metric-label">Reasoning Faithfulness</span>
               <span class="mini-metric-value">${(m.reasoning_faithfulness || 0).toFixed(2)}</span>
             </div>
+            ${costHtml}
           </div>
 
           ${renderPatternsPanel(scenario.patterns)}
+
+          ${judgeHtml}
 
           ${failuresHtml}
 
           <div style="margin-top: 24px;">
             <h3 style="font-size: 0.88rem; font-weight: 700; color: var(--text-primary); margin-bottom: 14px;">
-              Execution Trace (${steps.length} Steps)
+              Execution Trace (${steps.length} Step${steps.length === 1 ? "" : "s"})
             </h3>
             <div class="step-timeline">
               ${stepsHtml}
@@ -1822,10 +1954,7 @@
       const interval = parseInt(document.getElementById("autoRefreshSelect").value);
       if (autoRefreshTimer) clearInterval(autoRefreshTimer);
       if (interval > 0) {
-        autoRefreshTimer = setInterval(() => {
-          fetchLatestReport();
-          checkServerStatus();
-        }, interval);
+        autoRefreshTimer = setInterval(refreshIfChanged, interval);
       }
     }
 
@@ -1849,8 +1978,7 @@
 
     // Initial load
     window.addEventListener("DOMContentLoaded", () => {
-      checkServerStatus();
-      fetchLatestReport();
+      refreshIfChanged();
       updateAutoRefresh();
     });
   </script>

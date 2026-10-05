@@ -29,12 +29,18 @@ def instrument_smolagents(agent: Any, recorder: TraceRecorder | None = None) -> 
     calls it made, and calls made together in one step (which smolagents runs
     in parallel) share a parallel group. With managed agents, calling one is
     recorded as a handoff and every step is tagged with the agent that made it.
+
+    With a ``Guard`` on the recorder, a blocked tool call raises ``ActionBlocked``
+    instead of running (smolagents shows the error to the model), and a used-up
+    budget stops the run before the next model call.
     """
     recorder = recorder or TraceRecorder()
+    recorder.sdk_capture = False  # the step callbacks record model usage; instrument() would count it twice
     managed = dict(getattr(agent, "managed_agents", None) or {})
     owner = (getattr(agent, "name", None) or "manager") if managed else None
     _wrap_tools(agent, recorder, owner, final=True)
     _attach_step_callback(agent, recorder, owner)
+    _guard_model_calls(agent, recorder)
     for name, sub_agent in managed.items():
         _instrument_managed(sub_agent, name, recorder, parent=owner)
 
@@ -43,16 +49,39 @@ def instrument_smolagents(agent: Any, recorder: TraceRecorder | None = None) -> 
     def run(*args: Any, **kwargs: Any) -> Any:
         if kwargs.get("reset", True):
             recorder.reset()
-        result = original_run(*args, **kwargs)
+        try:
+            result = original_run(*args, **kwargs)
+        except BaseException as err:
+            recorder.end_run(error=err)
+            raise
         # With stream=True the answer arrives through the final_answer tool instead
         if not inspect.isgenerator(result):
             output = getattr(result, "output", result)  # RunResult when return_full_result=True
             if output is not None:
                 recorder.final_answer(str(output))
+            recorder.end_run()
         return result
 
     agent.run = run
     return recorder
+
+
+def _guard_model_calls(agent: Any, recorder: TraceRecorder) -> None:
+    """With a guard, check the run's budget before each of the agent's model calls."""
+    model = getattr(agent, "model", None)
+    if recorder.guard is None or model is None or getattr(model, "_regshield_budget", None) is recorder:
+        return
+    for method in ("generate", "generate_stream"):
+        original = getattr(model, method, None)
+        if original is None:
+            continue
+
+        def guarded(*args: Any, _original: Any = original, **kwargs: Any) -> Any:
+            recorder.check_llm()  # raises ActionBlocked when the budget is used up
+            return _original(*args, **kwargs)
+
+        setattr(model, method, guarded)
+    model._regshield_budget = recorder
 
 
 def _wrap_tools(agent: Any, recorder: TraceRecorder, owner: str | None, final: bool) -> None:
@@ -79,13 +108,28 @@ def _wrap_tools(agent: Any, recorder: TraceRecorder, owner: str | None, final: b
     logger.debug("Instrumented %d tool(s) of %s", wrapped, owner or getattr(agent, "name", None) or "agent")
 
 
+def _record_usage(memory_step: Any, recorder: TraceRecorder, model: str, owner: str | None) -> None:
+    """The token usage of a step's model call (smolagents keeps it on each memory step)."""
+    usage = getattr(memory_step, "token_usage", None)
+    input_tokens = getattr(usage, "input_tokens", None)
+    output_tokens = getattr(usage, "output_tokens", None)
+    if isinstance(input_tokens, int) and isinstance(output_tokens, int) and (input_tokens or output_tokens):
+        recorder.llm_call(model, input_tokens, output_tokens, agent=owner)
+
+
 def _attach_step_callback(agent: Any, recorder: TraceRecorder, owner: str | None) -> None:
     """After each of the agent's steps, give the steps it recorded the model's output as
-    their thought, and group them as parallel when the model requested several calls."""
+    their thought, group them as parallel when the model requested several calls, and
+    record the step's token usage."""
     seen_list, seen_count = recorder.steps, len(recorder.steps)
+    model = str(getattr(getattr(agent, "model", None), "model_id", None) or "unknown")
+
+    def on_planning(memory_step: Any, **kwargs: Any) -> None:
+        _record_usage(memory_step, recorder, model, owner)
 
     def on_step(memory_step: Any, **kwargs: Any) -> None:
         nonlocal seen_list, seen_count
+        _record_usage(memory_step, recorder, model, owner)
         if seen_list is not recorder.steps:  # a new run reset the recorder (reset() starts a new list)
             seen_list, seen_count = recorder.steps, 0
         new_steps = [step for step in recorder.steps[seen_count:] if step.get("agent") == owner]
@@ -102,9 +146,10 @@ def _attach_step_callback(agent: Any, recorder: TraceRecorder, owner: str | None
 
     callbacks: Any = getattr(agent, "step_callbacks", None)
     if hasattr(callbacks, "register"):  # smolagents >= 1.20
-        from smolagents.memory import ActionStep
+        from smolagents.memory import ActionStep, PlanningStep
         callbacks.register(ActionStep, on_step)
-    elif isinstance(callbacks, list):
+        callbacks.register(PlanningStep, on_planning)
+    elif isinstance(callbacks, list):  # older versions call every callback for every kind of step
         callbacks.append(on_step)
 
 
@@ -112,6 +157,7 @@ def _instrument_managed(sub_agent: Any, name: str, recorder: TraceRecorder, pare
     """Calling a managed agent is a handoff from its manager."""
     _wrap_tools(sub_agent, recorder, name, final=False)
     _attach_step_callback(sub_agent, recorder, name)
+    _guard_model_calls(sub_agent, recorder)
     original_run = sub_agent.run
 
     def run(*args: Any, **kwargs: Any) -> Any:

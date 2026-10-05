@@ -7,6 +7,7 @@ import pytest
 
 from regression_shield import LLMJudge, evaluate_trace
 from regression_shield.cli import main
+from regression_shield.core.judge import is_self_hosted
 
 SCENARIO = {"scenario_id": "JUDGE_01", "expected_tools": ["lookup"]}
 TRACE = [{"thought": "Looking it up.", "action": {"name": "lookup", "args": {}}, "observation": "found"}]
@@ -129,6 +130,70 @@ def test_request_goes_to_base_url_chat_completions(monkeypatch, base_url):
     monkeypatch.setattr(httpx.Client, "post", fake_post)
     LLMJudge(api_key="sk-test", base_url=base_url).verify_reasoning_and_outcome("goal", TRACE, "done")
     assert seen == [base_url.rstrip("/") + "/chat/completions"]
+
+
+@pytest.mark.parametrize("url, expected", [
+    ("http://localhost:11434/v1", True), ("http://127.0.0.1:11434/v1", True), ("http://[::1]:8000/v1", True),
+    ("http://192.168.1.20:8000/v1", True), ("http://10.0.0.5/v1", True),
+    ("http://ollama:11434/v1", True),               # a Docker Compose or Kubernetes service name
+    ("http://host.docker.internal:11434/v1", True), ("http://gpu-box.local:8000/v1", True),
+    ("https://openrouter.ai/api/v1", False), ("https://api.openai.com/v1", False),
+    ("https://api.groq.com/openai/v1", False), ("http://8.8.8.8:8000/v1", False),
+])
+def test_self_hosted_endpoints(url, expected):
+    assert is_self_hosted(url) is expected
+
+
+def test_a_self_hosted_judge_needs_no_key(monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("JUDGE_MODEL", "qwen2.5:7b")
+    seen = []
+
+    def fake_post(self, url, **kwargs):
+        seen.append((url, kwargs["headers"], kwargs["json"]["model"]))
+        return FakeResponse(200, content='{"score": 0.9, "reasoning": "Grounded."}')
+
+    monkeypatch.setattr(httpx.Client, "post", fake_post)
+    report = evaluate_trace(scenario=SCENARIO, trace=TRACE, use_llm_judge=True)
+    assert report.passed and report.judge_audit["model"] == "qwen2.5:7b"
+    assert seen == [("http://localhost:11434/v1/chat/completions", {"Content-Type": "application/json"}, "qwen2.5:7b")]
+
+
+def test_a_self_hosted_judge_set_up_in_the_config_file(monkeypatch, tmp_path):
+    config = tmp_path / "regshield.toml"
+    config.write_text('llm_judge = true\njudge_base_url = "http://ollama:11434/v1"\njudge_model = "llama3.1:8b"\n',
+                      encoding="utf-8")
+    monkeypatch.setenv("REGSHIELD_CONFIG", str(config))
+    reply_with(monkeypatch, FakeResponse(200, content='{"score": 0.8, "reasoning": "Grounded."}'))
+    report = evaluate_trace(scenario=SCENARIO, trace=TRACE)
+    assert report.passed and report.judge_audit["model"] == "llama3.1:8b"
+
+
+def test_a_self_hosted_judge_needs_a_model_name(monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
+    with pytest.raises(ValueError, match="set judge_model"):
+        evaluate_trace(scenario=SCENARIO, trace=TRACE, use_llm_judge=True)
+
+
+def test_a_server_at_a_public_address_needs_a_key():
+    with pytest.raises(ValueError, match=r"llm.example.com/v1 isn't on your machine .* needs an API key"):
+        evaluate_trace(scenario=SCENARIO, trace=TRACE, use_llm_judge=True,
+                       base_url="https://llm.example.com/v1", model="qwen2.5:7b")
+
+
+def test_the_servers_own_error_message_is_kept(monkeypatch):
+    class NotPulled:
+        status_code = 404
+        text = '{"error": {"message": "model \\"llama3.1:8b\\" not found, try pulling it first"}}'
+
+        def json(self):
+            return json.loads(self.text)
+
+    reply_with(monkeypatch, NotPulled())
+    audit = LLMJudge(base_url="http://localhost:11434/v1", model="llama3.1:8b").verify_reasoning_and_outcome(
+        "goal", TRACE, "done")
+    assert audit["error"] == ('HTTP 404 from http://localhost:11434/v1/chat/completions: '
+                              'model "llama3.1:8b" not found, try pulling it first')
 
 
 def test_prompt_shows_pattern_events(monkeypatch):

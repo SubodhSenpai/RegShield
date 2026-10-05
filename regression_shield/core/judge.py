@@ -1,16 +1,18 @@
 """Optional LLM judge: scores whether an agent's reasoning and answer are grounded in its tool results.
 
 Works with any OpenAI-compatible chat completions endpoint (OpenRouter by default,
-OpenAI, Groq, Ollama, vLLM...).
+OpenAI, Groq, Ollama, vLLM...). A server on your own machine or network needs no key.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -53,13 +55,71 @@ def _describe_step(step: dict[str, Any], position: int) -> str:
     return "\n".join(lines)
 
 
+def _env_timeout() -> float | None:
+    """REGSHIELD_JUDGE_TIMEOUT (or JUDGE_TIMEOUT) in seconds, if set."""
+    from regression_shield.config import env_setting
+
+    value = env_setting("judge_timeout")
+    return None if value is None else float(value)
+
+
+def _usage(body: Any, model: str, pricing: dict[str, Any] | None) -> dict[str, Any]:
+    """Tokens and cost of one judge call, from the response's ``usage`` (when the API sends it)."""
+    usage = body.get("usage") if isinstance(body, dict) else None
+    if not isinstance(usage, dict):
+        return {}
+    tokens = {"input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+              "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)}
+    result: dict[str, Any] = {"usage": tokens}
+    reported = usage.get("cost")
+    if isinstance(reported, (int, float)) and not isinstance(reported, bool):
+        result["cost_usd"] = round(float(reported), 6)  # OpenRouter reports what the call cost
+    else:
+        from regression_shield.core.cost import price_for
+
+        price = price_for(model, pricing)
+        if price is not None:
+            result["cost_usd"] = round(price.cost(tokens["input_tokens"], tokens["output_tokens"]), 6)
+    return result
+
+
+def _error_detail(response: Any) -> str:
+    """The server's own explanation of an error reply, kept short."""
+    try:
+        body = response.json()
+    except Exception:
+        return (getattr(response, "text", "") or "").strip()[:200]
+    if not isinstance(body, dict):
+        return ""
+    error = body.get("error")
+    message = error.get("message") if isinstance(error, dict) else error if isinstance(error, str) else body.get("message")
+    return str(message).strip()[:200] if message else ""
+
+
+def is_self_hosted(url: str) -> bool:
+    """True for a server on this machine or a private network (Ollama, vLLM, LM Studio...),
+    which usually needs no API key: localhost, private IP addresses, ``*.local``/``*.internal``
+    names and one-word hosts such as a Docker or Kubernetes service called ``ollama``."""
+    host = (urlparse(url).hostname or "").lower()
+    if not host:
+        return False
+    if host == "localhost" or "." not in host or host.endswith((".local", ".internal", ".lan")):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private or address.is_link_local or address.is_unspecified
+
+
 class LLMJudge:
     """Asks an LLM to score a trace from 0 to 1; a score of ``PASS_SCORE`` or more passes.
 
     Settings come from the arguments, then the environment. ``OPENROUTER_API_KEY``
     is sent to OpenRouter; ``OPENAI_API_KEY`` alone is sent to OpenAI. Set
     ``JUDGE_MODEL`` and ``OPENROUTER_BASE_URL`` / ``OPENAI_BASE_URL`` to override
-    the model and endpoint (e.g. a local Ollama server).
+    the model and endpoint. A self-hosted endpoint (Ollama, vLLM, LM Studio on your
+    machine or network) needs no key, only a model name.
     """
 
     DEFAULT_MODEL = "minimax/minimax-m2.7:free"
@@ -73,20 +133,43 @@ class LLMJudge:
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        timeout: float = 30.0,
+        timeout: float | None = None,
+        pricing: dict[str, Any] | None = None,
     ):
+        # Arguments win, then environment variables, then the project config file, then defaults
+        from regression_shield.config import env_setting, load_config
+
+        config = load_config()  # also loads the env_file it names, where API keys can live
+        env_base_url = env_setting("judge_base_url")
         if not api_key and not os.getenv("OPENROUTER_API_KEY") and os.getenv("OPENAI_API_KEY"):
             # An OpenAI key goes to OpenAI, not to the OpenRouter default
             self.api_key = os.getenv("OPENAI_API_KEY")
-            default_base_url = os.getenv("OPENAI_BASE_URL") or self.OPENAI_BASE_URL
+            default_base_url = (env_base_url or os.getenv("OPENAI_BASE_URL") or config.get("judge_base_url")
+                                or self.OPENAI_BASE_URL)
             default_model = self.OPENAI_MODEL
         else:
             self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-            default_base_url = os.getenv("OPENROUTER_BASE_URL") or os.getenv("OPENAI_BASE_URL") or self.DEFAULT_BASE_URL
+            default_base_url = (env_base_url or os.getenv("OPENROUTER_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+                                or config.get("judge_base_url") or self.DEFAULT_BASE_URL)
             default_model = self.DEFAULT_MODEL
-        self.model = model or os.getenv("JUDGE_MODEL") or default_model
+        chosen_model = model or env_setting("judge_model") or config.get("judge_model")
+        self.model_is_default = not chosen_model
+        self.model = chosen_model or default_model
         self.base_url = (base_url or default_base_url).rstrip("/")
-        self.timeout = timeout
+        self.timeout = float(timeout if timeout is not None else _env_timeout() or config.get("judge_timeout") or 30.0)
+        if self.timeout <= 0:
+            raise ValueError(f"judge timeout must be > 0 seconds, got {self.timeout}")
+        self.pricing = pricing
+
+    @property
+    def self_hosted(self) -> bool:
+        """The endpoint is on your machine or network (see ``is_self_hosted``)."""
+        return is_self_hosted(self.base_url)
+
+    @property
+    def needs_key(self) -> bool:
+        """Hosted APIs need a key; a self-hosted server doesn't."""
+        return not self.self_hosted
 
     @staticmethod
     def _parse_reply(text: str) -> dict[str, Any]:
@@ -123,7 +206,7 @@ class LLMJudge:
         obtained (no key, HTTP error, unusable reply), ``score`` is None, ``passed``
         is False and ``error`` says why.
         """
-        if not self.api_key:
+        if not self.api_key and self.needs_key:
             return self._error_result("no API key provided (set OPENROUTER_API_KEY or OPENAI_API_KEY)")
 
         trace_text = "\n".join(_describe_step(step, position) for position, step in enumerate(steps, 1))
@@ -136,7 +219,9 @@ class LLMJudge:
             ],
             "temperature": 0.0,
         }
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
         logger.debug("Judge request: model=%s endpoint=%s steps=%d", self.model, endpoint, len(steps))
         started = time.perf_counter()
@@ -144,9 +229,11 @@ class LLMJudge:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(endpoint, headers=headers, json=payload)
             if response.status_code != 200:
-                logger.warning("LLM judge HTTP %d: %s", response.status_code, response.text[:120])
-                return self._error_result(f"HTTP {response.status_code} from {endpoint}")
-            verdict = self._parse_reply(response.json()["choices"][0]["message"]["content"])
+                detail = _error_detail(response)  # e.g. Ollama: model "x" not found, try pulling it first
+                logger.warning("LLM judge HTTP %d: %s", response.status_code, detail)
+                return self._error_result(f"HTTP {response.status_code} from {endpoint}" + (f": {detail}" if detail else ""))
+            body = response.json()
+            verdict = self._parse_reply(body["choices"][0]["message"]["content"])
             score = max(0.0, min(1.0, float(verdict["score"])))
         except Exception as err:  # any failure means no verdict, which the evaluator handles
             logger.warning("LLM judge failed: %s", err)
@@ -158,4 +245,5 @@ class LLMJudge:
             "passed": score >= self.PASS_SCORE,
             "reasoning": str(verdict.get("reasoning", "")).strip(),
             "model": self.model,
+            **_usage(body, self.model, self.pricing),
         }

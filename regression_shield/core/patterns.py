@@ -22,12 +22,15 @@ fraction of individual checks that passed.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
-from regression_shield.core.metrics import is_error_observation
+from regression_shield.core.cost import format_usd
+from regression_shield.core.faithfulness import is_error_observation
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,8 @@ def batch_indices(steps: list[dict[str, Any]]) -> list[int]:
     count = 0
     for step in steps:
         group = step.get("parallel_group")
+        if group is not None and not isinstance(group, (str, int, float, tuple)):
+            group = json.dumps(group, sort_keys=True, default=str)  # a list or dict still names one group
         if group is not None and group in group_batch:
             batches.append(group_batch[group])
             continue
@@ -114,11 +119,116 @@ class _Tally:
         }
 
 
+def _patterns(rule: Any) -> list[str]:
+    return [rule] if isinstance(rule, str) else [str(item) for item in rule or []]
+
+
+def _argument_text(value: Any) -> str:
+    return value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+
+
+def _excerpt(text: str, match: re.Match[str]) -> str:
+    """The matched part of an argument with a little context, at most about 60 characters."""
+    if len(text) <= 60:
+        return text
+    start, end = max(0, match.start() - 20), min(len(text), match.end() + 20)
+    return ("..." if start else "") + text[start:end] + ("..." if end < len(text) else "")
+
+
+def forbidden_argument_hit(rules: dict[str, Any], name: str, args: dict[str, Any]) -> tuple[str, str, str] | None:
+    """The first ``(argument, pattern, excerpt)`` in ``args`` that a forbidden_arguments rule
+    forbids for tool ``name``, or None. Used by the guard before a call runs."""
+    for tool, params in rules.items():
+        if tool not in ("*", name):
+            continue
+        for param, rule in params.items():
+            values = list(args.items()) if param == "*" else [(param, args[param])] if param in args else []
+            for arg_name, value in values:
+                text = _argument_text(value)
+                for pattern in _patterns(rule):
+                    match = re.search(pattern, text, re.IGNORECASE)
+                    if match:
+                        return str(arg_name), pattern, _excerpt(text, match)
+    return None
+
+
+def _check_forbidden_arguments(rules: dict[str, Any], steps: list[dict[str, Any]], tally: _Tally) -> None:
+    """forbidden_arguments: {tool or "*": {argument or "*": pattern or [patterns]}}. Patterns are
+    regular expressions, matched case-insensitively anywhere in the value (JSON text for objects)."""
+    applied: set[tuple[str, str]] = set()
+    for position, step in enumerate(steps, 1):
+        if not is_tool_call(step):
+            continue
+        action = action_of(step)
+        name = action["name"]
+        args = action.get("args") or action.get("arguments") or {}
+        if not isinstance(args, dict):
+            args = {"input": args}
+        for tool, params in rules.items():
+            if tool not in ("*", name):
+                continue
+            for param, rule in params.items():
+                values = list(args.items()) if param == "*" else [(param, args[param])] if param in args else []
+                for arg_name, value in values:
+                    applied.add((tool, param))
+                    text = _argument_text(value)
+                    hit = next(((p, m) for p in _patterns(rule) if (m := re.search(p, text, re.IGNORECASE))), None)
+                    tally.check(hit is None, "" if hit is None else
+                                f"Step {step_number(step, position)}: {name}.{arg_name} matches forbidden pattern "
+                                f"/{hit[0]}/: {_excerpt(text, hit[1])!r}{_blocked(step)}")
+    for tool, params in rules.items():
+        for param in params:
+            if (tool, param) not in applied:  # never used, so never used with a forbidden value
+                tally.check(True)
+
+
+def _blocked(step: dict[str, Any]) -> str:
+    """Marks a violation the guard stopped: the agent tried it, but it didn't run."""
+    return " (blocked)" if step.get("blocked") else ""
+
+
+def _check_prerequisites(prerequisites: dict[str, Any], steps: list[dict[str, Any]], tally: _Tally) -> None:
+    """prerequisites: {tool: [tools]}. Each call to ``tool`` needs every listed tool to have run
+    in an earlier step, and its latest result before the call to be a success."""
+    batches = batch_indices(steps)
+    calls = [(i, action_of(step)["name"]) for i, step in enumerate(steps) if is_tool_call(step)]
+    gated_calls = 0
+    for i, name in calls:
+        if name not in prerequisites:
+            continue
+        gated_calls += 1
+        label = f"Step {step_number(steps[i], i + 1)}: '{name}'"
+        blocked = _blocked(steps[i])
+        for prerequisite in _patterns(prerequisites[name]):
+            # A blocked call never ran, so it can't be the prerequisite's successful run
+            ran = [(j, other) for j, other in calls if other == prerequisite and not steps[j].get("blocked")]
+            before = [j for j, other in ran if batches[j] < batches[i]]
+            alongside = [j for j, other in ran if batches[j] == batches[i] and j != i]
+            if before:
+                last = before[-1]
+                tally.check(
+                    not is_error_observation(steps[last].get("observation"), prerequisite),
+                    f"{label} ran after its prerequisite '{prerequisite}' failed "
+                    f"(step {step_number(steps[last], last + 1)}){blocked}",
+                )
+            elif alongside:
+                tally.check(False, f"{label} ran in parallel with its prerequisite '{prerequisite}' "
+                                   f"(step {step_number(steps[alongside[0]], alongside[0] + 1)}){blocked}")
+            else:
+                tally.check(False, f"{label} ran before its prerequisite '{prerequisite}' succeeded{blocked}")
+    if not gated_calls:  # the gated tools never ran, so they never ran too early
+        tally.check(True)
+
+
 def check_policy(scenario: dict[str, Any], steps: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """forbidden_tools: never call these. max_tool_calls: per-tool call caps."""
+    """forbidden_tools: never call these. max_tool_calls: per-tool call caps.
+    forbidden_arguments: argument values a tool must never get. prerequisites: tools
+    that must have succeeded before another tool may run."""
     forbidden = set(scenario.get("forbidden_tools") or [])
     caps = scenario.get("max_tool_calls") or {}
-    if not forbidden and not caps:
+    argument_rules = scenario.get("forbidden_arguments") or {}
+    prerequisites = scenario.get("prerequisites") or {}
+    if not forbidden and not caps and not argument_rules and not prerequisites:
         return None
 
     tally = _Tally()
@@ -129,13 +239,59 @@ def check_policy(scenario: dict[str, Any], steps: list[dict[str, Any]]) -> dict[
         name = action_of(step)["name"]
         counts[name] += 1
         if name in forbidden:
-            tally.check(False, f"Step {step_number(step, position)}: called forbidden tool '{name}'")
+            tally.check(False, f"Step {step_number(step, position)}: called forbidden tool '{name}'{_blocked(step)}")
     for tool in forbidden:
         if not counts[tool]:
             tally.check(True)
     for tool, cap in caps.items():
         tally.check(counts[tool] <= cap, f"'{tool}' was called {counts[tool]} times (max {cap})")
+    if argument_rules:
+        _check_forbidden_arguments(argument_rules, steps, tally)
+    if prerequisites:
+        _check_prerequisites(prerequisites, steps, tally)
     return tally.result("Policy", {"tool_call_counts": dict(counts)})
+
+
+def check_budget(scenario: dict[str, Any], cost: dict[str, Any] | None) -> dict[str, Any] | None:
+    """max_cost_usd, max_tokens, max_llm_calls: limits on what one run may spend.
+
+    ``cost`` is the run's usage summary (``core/cost.py``). A budget can't be
+    checked when the trace records no usage, or when a model has no price.
+    """
+    max_cost = scenario.get("max_cost_usd")
+    max_tokens = scenario.get("max_tokens")
+    max_calls = scenario.get("max_llm_calls")
+    if max_cost is None and max_tokens is None and max_calls is None:
+        return None
+
+    tally = _Tally()
+    if max_cost is not None:
+        if cost is None:
+            tally.check(False, "No usage was recorded (LLM calls or paid tool calls), so the cost can't be checked")
+        elif cost["unpriced_models"]:
+            names = ", ".join(repr(model) for model in cost["unpriced_models"])
+            tally.check(False, f"Cost unknown: no price for {names}; add it to your pricing")
+        else:
+            spenders = sorted([*((m, e["usd"]) for m, e in cost["models"].items()),
+                               *((t, e["usd"]) for t, e in cost["tools"].items())], key=lambda item: -item[1])
+            breakdown = ", ".join(f"{name} {format_usd(usd)}" for name, usd in spenders[:3] if usd > 0)
+            tally.check(cost["total_usd"] <= max_cost + 1e-12,
+                        f"Cost {format_usd(cost['total_usd'])} is over the {format_usd(max_cost)} budget"
+                        + (f" ({breakdown})" if breakdown else ""))
+    if max_tokens is not None or max_calls is not None:
+        if not cost or not cost["llm_calls"]:
+            tally.check(False, "No LLM calls were recorded, so the token and call budgets can't be checked")
+        else:
+            if max_tokens is not None:
+                tally.check(cost["total_tokens"] <= max_tokens,
+                            f"{cost['total_tokens']:,} tokens (max {max_tokens:,})")
+            if max_calls is not None:
+                tally.check(cost["llm_calls"] <= max_calls, f"{cost['llm_calls']} LLM calls (max {max_calls})")
+    return tally.result("Budget", {
+        "total_usd": cost["total_usd"] if cost else None,
+        "total_tokens": cost["total_tokens"] if cost else 0,
+        "llm_calls": cost["llm_calls"] if cost else 0,
+    })
 
 
 def check_human_approval(scenario: dict[str, Any], steps: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -148,16 +304,17 @@ def check_human_approval(scenario: dict[str, Any], steps: list[dict[str, Any]]) 
     if not required and not approvals:
         return None
 
-    guarded = required | {action_of(s).get("tool") for s in approvals if action_of(s).get("tool")}
+    guarded = required | {str(action_of(s)["tool"]) for s in approvals if action_of(s).get("tool")}
     decisions: dict[str | None, bool] = {}  # tool (None = any tool) -> approved?
     tally = _Tally()
     guarded_calls = 0
     for position, step in enumerate(steps, 1):
         action = action_of(step)
         if event_type(step) == "approval":
-            decisions[action.get("tool")] = bool(action.get("approved", True))
+            decisions[str(action["tool"]) if action.get("tool") else None] = bool(action.get("approved", True))
             continue
-        if not is_tool_call(step) or action["name"] not in guarded:
+        # A call the guard blocked didn't run, so it neither needed nor used an approval
+        if not is_tool_call(step) or action["name"] not in guarded or step.get("blocked"):
             continue
         name = action["name"]
         guarded_calls += 1
@@ -237,7 +394,7 @@ def check_plan_execute(scenario: dict[str, Any], steps: list[dict[str, Any]]) ->
     # After a failed call, the executor should retry or replan, not push on with the next step
     if plan_positions:
         for i in tool_positions:
-            if not is_error_observation(str(steps[i].get("observation", ""))):
+            if not is_error_observation(str(steps[i].get("observation", "")), action_of(steps[i])["name"]):
                 continue
             failed_tool = action_of(steps[i])["name"]
             for j in range(i + 1, len(steps)):

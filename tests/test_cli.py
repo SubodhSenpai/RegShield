@@ -109,7 +109,7 @@ def test_verbose_flag(tmp_path, flag, expect_logs):
 def test_version_flag(capsys):
     with pytest.raises(SystemExit):
         main(["--version"])
-    assert "regshield 0.4.0" in capsys.readouterr().out
+    assert "regshield 0.5.0" in capsys.readouterr().out
 
 
 @pytest.fixture

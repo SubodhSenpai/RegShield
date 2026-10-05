@@ -111,7 +111,9 @@ def test_deploy_gate():
     evaluate_trace(scenario, trace).raise_for_failures()
 ```
 
-LLM agents don't behave the same on every run. Run important scenarios several times, or on a set of inputs, and look at the pass rate.
+LLM agents don't behave the same on every run. Run important scenarios several times, or on a set of inputs, and look at the pass rate: `evaluate_runs(scenario, traces)` evaluates the runs together and fails unless enough of them pass ([recipe](cookbook.md#run-the-agent-several-times)).
+
+Thresholds and judge settings shared by your tests and CI can go in `pyproject.toml` under `[tool.regshield]` ([configuration](reference.md#configuration-file)).
 
 ## 5. Gate your CI
 
@@ -162,10 +164,15 @@ jobs:
 regshield serve
 ```
 
-The dashboard at `http://localhost:8000` shows each scenario's metrics, pattern checks and full trace. It reads `reports/latest_report.json` in the folder you start it from; `regshield eval` writes that file, and so does `evaluate_trace(..., save_report=True)`.
+The dashboard at `http://localhost:8000` shows each scenario's metrics, pattern checks and full trace. It reads `reports/latest_report.json` in the folder you start it from; `regshield eval` writes that file, and so does `evaluate_trace(..., save_report=True)`. It runs on your machine only: no account, nothing uploaded.
+
+![The RegShield dashboard showing a failed scenario and the rules it broke](images/dashboard.png)
 
 ## Next
 
+- Ready-made checks for common problems: [Cookbook](cookbook.md)
 - Plans, handoffs, approvals, routers, graphs or critique loops: [Agentic patterns](patterns.md)
 - Framework details: [Integrations](integrations.md)
 - Nine real agents run against a local LLM: [Examples](../examples/README.md)
+- Run your agent and the LLM judge on your own GPU instead of a paid API: [Local and self-hosted models](local-models.md)
+- Guard agents while they run, and send runs to your monitoring: [In production](production.md)

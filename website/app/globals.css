@@ -172,6 +172,9 @@ html[data-scene='quiet'] .landscape :is(.s1, .s2, .g) { color: transparent; }
   text-shadow: 0 1px 12px rgba(17, 16, 14, 0.95);
 }
 .hero-actions { margin-top: clamp(18px, 3vh, 32px); display: flex; justify-content: center; align-items: center; gap: 22px; flex-wrap: wrap; }
+.hero-release { margin: 12px 0 0; font: 12.5px var(--mono); color: var(--fg-3); text-shadow: 0 1px 12px rgba(17, 16, 14, 0.95); }
+.hero-release a { color: var(--fg-2); border-bottom: 1px solid var(--line-2); transition: color 0.15s; }
+.hero-release a:hover { color: var(--fg); }
 .hero .term {
   flex: 0 1 auto;
   min-height: 0;
@@ -199,6 +202,10 @@ html[data-scene='quiet'] .landscape :is(.s1, .s2, .g) { color: transparent; }
 }
 .install:hover { border-color: var(--fg-4); }
 .install .prompt { color: var(--amber); }
+/* The install from GitHub is a long command: it wraps inside the button */
+.install { max-width: 100%; text-align: left; }
+.install .cmd { min-width: 0; overflow-wrap: anywhere; }
+.install .prompt, .install .hint { white-space: nowrap; }
 .install .hint {
   margin-left: 6px;
   padding: 2px 8px;
@@ -558,8 +565,9 @@ html[data-scene='quiet'] .landscape :is(.s1, .s2, .g) { color: transparent; }
   .nav-links { gap: 14px; }
   .nav-right .version, .nav-links .wide { display: none; }
   .hero-sub { font-size: 16px; }
-  .install { font-size: 12.5px; gap: 9px; padding: 10px 8px 10px 12px; white-space: nowrap; max-width: 100%; }
+  .install { font-size: 12.5px; gap: 9px; padding: 10px 8px 10px 12px; max-width: 100%; }
   .install .hint { margin-left: 2px; min-width: 0; padding: 2px 6px; font-size: 11px; }
+  .hero-release-note { display: none; }
   .term-body { height: auto; font-size: 12px; padding: 14px 14px 18px; }
   :root { --gap: 48px; }
   .ledger a { grid-template-columns: 1fr; gap: 2px; }

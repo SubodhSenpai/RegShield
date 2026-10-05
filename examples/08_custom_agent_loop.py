@@ -4,7 +4,7 @@ Works with any OpenAI-compatible API (OpenAI, Ollama, vLLM, OpenRouter...).
 Wrap your tool functions with ``recorder.wrap`` and add the model's text as
 thoughts; the same pattern fits CrewAI, AutoGen, Pydantic AI or any SDK.
 
-    pip install regression-shield openai
+    pip install . openai   # from a clone of this repository
     python examples/08_custom_agent_loop.py
 """
 

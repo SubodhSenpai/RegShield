@@ -3,7 +3,7 @@
 ``instrument_smolagents`` records each tool call as it runs, and records the
 manager calling its sub-agent as a handoff.
 
-    pip install "regression-shield[smolagents]" "smolagents[openai]"
+    pip install ".[smolagents]" "smolagents[openai]"   # from a clone of this repository
     python examples/09_smolagents.py
 """
 

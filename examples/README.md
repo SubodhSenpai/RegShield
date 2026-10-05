@@ -26,7 +26,7 @@ The examples talk to any OpenAI-compatible API. By default they use a local mode
 
 ```bash
 ollama pull qwen2.5:3b
-pip install "regression-shield[all]" langchain-openai langgraph-supervisor "smolagents[openai]"
+pip install ".[all]" langchain-openai langgraph-supervisor "smolagents[openai]"   # from the repository root
 cd examples
 python quickstart.py
 python 01_react_agent_policy.py

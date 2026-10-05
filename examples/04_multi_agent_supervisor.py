@@ -3,7 +3,7 @@
 RegShield tags each step with the agent that ran it and records the
 supervisor's transfer_to_* calls as handoffs, with no extra code.
 
-    pip install "regression-shield[langgraph]" langchain langchain-openai langgraph-supervisor
+    pip install ".[langgraph]" langchain langchain-openai langgraph-supervisor   # from a clone of this repository
     python examples/04_multi_agent_supervisor.py
 """
 

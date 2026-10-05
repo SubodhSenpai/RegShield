@@ -736,7 +736,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - run: pip install regression-shield
+      - run: pip install https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl
       - name: Pull the judge model
         run: curl -sf http://localhost:11434/api/pull -d '{"model": "qwen2.5:3b", "stream": false}'
       - run: regshield eval scenarios.json --llm-judge --base-url http://localhost:11434/v1 --model qwen2.5:3b --judge-timeout 300
@@ -974,7 +974,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install regression-shield
+      - run: pip install https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl
       - run: regshield eval scenarios.json
 ```
 

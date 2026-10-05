@@ -2,16 +2,19 @@
 // answer engines (https://llmstxt.org). /llms-full.txt has the docs in full.
 
 import { DOCS } from '../../lib/docs';
-import { DESCRIPTION, FAQ, NAME, PYPI, REPO, SITE_URL } from '../../lib/site';
+import { latestRelease } from '../../lib/release';
+import { DESCRIPTION, NAME, RELEASES, REPO, SITE_URL, faq } from '../../lib/site';
 
 export const dynamic = 'force-static';
+export const revalidate = 3600;
 
-export function GET() {
+export async function GET() {
+  const release = await latestRelease();
   const text = `# ${NAME}
 
 > ${DESCRIPTION}
 
-Install with \`pip install regression-shield\` (Python 3.10+). MIT license. The core checks are deterministic and need no LLM or API key.
+Latest release: ${release.version}. RegShield isn't on PyPI yet, so install it from GitHub with \`${release.installCommand}\` (Python 3.10+). MIT license. The core checks are deterministic and need no LLM or API key.
 
 ## Docs
 
@@ -20,12 +23,13 @@ ${DOCS.map((d) => `- [${d.title}](${SITE_URL}${d.href}): ${d.description}`).join
 
 ## Questions
 
-${FAQ.map(({ q, a }) => `### ${q}\n\n${a}`).join('\n\n')}
+${faq(release).map(({ q, a }) => `### ${q}\n\n${a}`).join('\n\n')}
 
 ## Links
 
 - [Source code](${REPO})
-- [PyPI package](${PYPI})
+- [Latest release](${release.releaseUrl})
+- [All releases](${RELEASES})
 `;
   return new Response(text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }

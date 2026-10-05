@@ -4,7 +4,7 @@
 
 **Regression tests for what your AI agent *does*, not just what it says.**
 
-Check every tool call, handoff, approval and plan, in CI and in production. Works with paid APIs and local models.
+Classical algorithms check every tool call, handoff, approval and plan, with an optional LLM judge for meaning. In CI and in production, on paid APIs or local models.
 
 [![Latest release](https://img.shields.io/github/v/release/SubodhSenpai/RegShield?label=release&color=18181b)](https://github.com/SubodhSenpai/RegShield/releases/latest)
 [![CI](https://github.com/SubodhSenpai/RegShield/actions/workflows/ci.yml/badge.svg)](https://github.com/SubodhSenpai/RegShield/actions/workflows/ci.yml)
@@ -24,7 +24,7 @@ Check every tool call, handoff, approval and plan, in CI and in production. Work
 [![pytest](https://img.shields.io/badge/pytest-0A9EDC?logo=pytest&logoColor=white)](#use-it-in-ci-and-pytest)
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)](https://github.com/SubodhSenpai/RegShield/blob/main/docs/cookbook.md#gate-pull-requests)
 
-[Install](#install) · [Quickstart](#quickstart) · [Patterns](#agentic-patterns) · [Integrations](#integrations) · [Production](#in-production) · [CI](#use-it-in-ci-and-pytest) · [Dashboard](#local-dashboard) · [Docs](#documentation)
+[Install](#install) · [Quickstart](#quickstart) · [Algorithms](#classical-algorithms-plus-an-llm-judge) · [Patterns](#agentic-patterns) · [Integrations](#integrations) · [Production](#in-production) · [CI](#use-it-in-ci-and-pytest) · [Dashboard](#local-dashboard) · [Docs](#documentation)
 
 </div>
 
@@ -41,7 +41,7 @@ Most evals grade the final answer. But agents act, and a prompt tweak can keep t
 - hands work to the **wrong** agent, or loops between agents
 - spends **far more** than the task is worth
 
-RegShield checks the **execution trace** against rules you write once. The core checks are deterministic, run offline and need no LLM. In production, the same rules **block** risky calls.
+RegShield checks the **execution trace** against rules you write once. The core checks are classical algorithms: deterministic, offline, no LLM. In production, the same rules **block** risky calls.
 
 ## Install
 
@@ -154,6 +154,26 @@ It's rule-based. A success claim ("completed", "has been processed", "all set"..
 Rules can't read meaning: "refunded $500" when the tool refunded $50 needs the [LLM judge](#optional-llm-judge).
 
 </details>
+
+### Classical algorithms, plus an LLM judge
+
+Every check is a deterministic algorithm: no LLM, no API key, milliseconds per trace. The optional [LLM judge](#optional-llm-judge) adds what rules can't see.
+
+| Agent flaw | Algorithm |
+|---|---|
+| Wrong or extra tools | F1 score (precision and recall) |
+| Steps out of order | Partial-order check over a dependency graph |
+| Ordering rules that contradict each other | Cycle detection by depth-first search, when the scenario loads |
+| Agents passing work round in circles | Cycle detection on the handoff path (loop erasure) |
+| Calls that should run in parallel, or mustn't | Grouping steps into concurrent batches |
+| Illegal moves in a graph workflow | Edge checks on the node path, visit counting |
+| Wrong argument values | Recursive structural matching |
+| Loops of identical calls | Hashing canonical call signatures |
+| "Done!" after a failed call | Clause-level rule matching |
+| Too many risky calls in production | Sliding-window rate limiting |
+| A wrong amount in the answer | LLM-as-judge (optional) |
+
+[How each check works](https://github.com/SubodhSenpai/RegShield/blob/main/docs/reference.md#algorithms)
 
 ## Agentic patterns
 

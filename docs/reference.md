@@ -3,6 +3,7 @@
 - [Scenario fields](#scenario-fields)
 - [Trace format](#trace-format)
 - [Report](#report)
+- [Algorithms](#algorithms)
 - [Scenario files](#scenario-files)
 - [CLI](#cli)
 - [REST API](#rest-api)
@@ -57,7 +58,7 @@ Details and examples: [Agentic patterns](patterns.md).
 | `max_tokens` | int | Budget: input plus output tokens of every model call |
 | `max_llm_calls` | int | Budget: number of model calls |
 
-Invalid rules (a regular expression that doesn't compile, a negative budget, an unknown `warn_only` check) raise `ValueError` when the scenario is read.
+Invalid rules raise `ValueError` when the scenario is read: a regular expression that doesn't compile, a negative budget, an unknown `warn_only` check, or ordering rules that contradict each other (`a` before `b` and `b` before `a`, in `expected_order` or `prerequisites`).
 
 ## Trace format
 
@@ -156,6 +157,28 @@ Details:
 - Claims backed by another tool's success (a lookup returning "SHIPPED") pass the last two rules.
 - Failure words returned by data-reading tools (`list_*`, `search_*`, `get_*`...) are data, not failures.
 - It reads wording, not meaning; use the LLM judge for that.
+
+## Algorithms
+
+Every check is a deterministic, classical algorithm: no model, no API key, milliseconds per trace. Only the optional LLM judge calls a model.
+
+| Check | Algorithm |
+|---|---|
+| Tool selection | F1 score over the sets of expected and invoked tools |
+| Argument correctness | Recursive structural matching (numbers, text, objects, lists) against each tool's best-matching call |
+| Call ordering | Each `[before, after]` edge of the dependency graph checked against first calls and parallel batches |
+| Contradictory rules | Depth-first search with three colours finds a cycle in `expected_order` or `prerequisites`, in O(tools + edges), when the scenario loads |
+| Handoff loops | Loop erasure over the handoff path: coming back to an agent already on the path cuts out the loop and counts it, so repeated cycles of any length are found in one pass |
+| Step efficiency | Repeated calls found by hashing each call's name and key-sorted arguments |
+| Parallel calls | Steps grouped into concurrent batches by `parallel_group` |
+| Graph workflows | The node path as layers (fan-out is one layer), each edge checked against the adjacency list; visits counted |
+| Plans, agent order | Greedy in-order subsequence matching |
+| Reasoning faithfulness | Clause-level rule matching of claims against each tool's own results |
+| Rate limits (guard) | A sliding time window per tool |
+| Pricing | Exact name, then the longest matching `*` pattern |
+| Meaning (optional) | LLM-as-judge on the whole trace |
+
+The graph algorithms live in `regression_shield/core/graphs.py`.
 
 ## Scenario files
 

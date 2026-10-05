@@ -22,7 +22,7 @@ export const DOCS = [
   },
   {
     slug: 'patterns', file: 'patterns.md', title: 'Agentic patterns', href: '/docs/patterns',
-    description: 'Checks for policy rules, human approval, plan-and-execute, multi-agent handoffs, routing, parallel calls, graph workflows and reflection loops.',
+    description: 'Checks for policy rules, human approval, plan-and-execute, multi-agent handoffs and loops, routing, parallel calls, graph workflows and reflection loops.',
   },
   {
     slug: 'integrations', file: 'integrations.md', title: 'Integrations', href: '/docs/integrations',
@@ -38,7 +38,7 @@ export const DOCS = [
   },
   {
     slug: 'reference', file: 'reference.md', title: 'Reference', href: '/docs/reference',
-    description: 'Every RegShield scenario field, the trace and report formats, metrics and thresholds, CLI flags, REST API and environment variables.',
+    description: 'Every RegShield scenario field, the trace and report formats, the classical algorithm behind each check, CLI flags, REST API and environment variables.',
   },
 ];
 

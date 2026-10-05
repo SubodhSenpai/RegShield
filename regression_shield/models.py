@@ -7,10 +7,12 @@ import logging
 import os
 import re
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
 from typing import Any
+
+from regression_shield.core.graphs import find_cycle
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +117,7 @@ class ScenarioSpec:
             raise ValueError("prerequisites must be {tool: [tools that must succeed first]}")
         self.prerequisites = {tool: [needs] if isinstance(needs, str) else list(needs)
                               for tool, needs in self.prerequisites.items()}
+        _reject_cycles(self.expected_order, self.prerequisites)
         for limit in ("max_cost_usd", "max_tokens", "max_llm_calls"):
             value = getattr(self, limit)
             if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0):
@@ -143,6 +146,34 @@ METRIC_KEYS = ("tool_selection", "argument_correctness", "call_ordering", "step_
 PATTERN_KEYS = ("policy", "human_approval", "plan_execute", "multi_agent", "routing", "parallel", "graph",
                 "reflection", "budget")
 CHECK_KEYS = frozenset((*METRIC_KEYS, *PATTERN_KEYS, "llm_judge"))
+
+
+def _reject_cycles(expected_order: list[Any], prerequisites: dict[str, list[Any]]) -> None:
+    """Ordering rules that contradict each other can never pass, so they're an error.
+
+    ``expected_order`` is a list (each tool before the next) or ``[before, after]``
+    pairs; a tool paired with itself orders nothing and is ignored. A prerequisite
+    cycle, including a tool that needs itself, would keep every tool in it from running.
+    """
+    is_pairs = bool(expected_order) and isinstance(expected_order[0], (list, tuple))
+    if is_pairs:
+        edges = [(pair[0], pair[1]) for pair in expected_order if isinstance(pair, (list, tuple)) and len(pair) >= 2]
+    else:  # a chain has the same cycles as every pair the list implies, in linear time
+        edges = list(zip(expected_order, expected_order[1:], strict=False))
+    cycle = find_cycle((a, b) for a, b in edges if a != b and isinstance(a, Hashable) and isinstance(b, Hashable))
+    if cycle:
+        twice = [] if is_pairs else [tool for tool in cycle if expected_order.count(tool) > 1]
+        repeated = f" ({twice[0]!r} is listed more than once)" if twice else ""
+        raise ValueError(f"expected_order contradicts itself: {' before '.join(map(repr, cycle))}{repeated}. "
+                         "No trace can satisfy it.")
+
+    cycle = find_cycle((needed, tool) for tool, needs in prerequisites.items() for needed in needs
+                       if isinstance(needed, Hashable))
+    if cycle and len(cycle) == 2:
+        raise ValueError(f"prerequisites: {cycle[0]!r} can't be its own prerequisite; it could never run.")
+    if cycle:
+        raise ValueError(f"prerequisites contradict each other: {' before '.join(map(repr, cycle))}. "
+                         "None of these tools could ever run.")
 
 
 def _unset(value: Any) -> bool:

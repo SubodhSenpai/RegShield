@@ -39,6 +39,8 @@ def test_eval_fails_with_exit_code_1(tmp_path, capsys):
 @pytest.mark.parametrize("items, message", [
     ([{"scenario": SCENARIO}], "item 1 is missing ['trace']"),
     ([{"scenario": {**SCENARIO, "expected_tool": ["x"]}, "trace": GOOD}], "Unknown scenario field(s) ['expected_tool']"),
+    ([{"scenario": {**SCENARIO, "expected_order": [["test", "deploy"], ["deploy", "test"]]}, "trace": GOOD}],
+     "expected_order contradicts itself: 'test' before 'deploy' before 'test'"),
 ])
 def test_bad_files_exit_with_code_2_and_a_clear_error(tmp_path, capsys, items, message):
     assert main(["eval", write(tmp_path, items), "--report", str(tmp_path / "r.json")]) == 2

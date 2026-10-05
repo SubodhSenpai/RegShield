@@ -14,7 +14,7 @@ export const REPO = 'https://github.com/SubodhSenpai/RegShield';
 export const RELEASES = `${REPO}/releases`;
 export const TITLE = 'RegShield: regression tests for AI agents';
 export const DESCRIPTION =
-  'Open-source Python library that tests AI agents by their tool calls. Checks order, arguments, handoffs and approvals, offline, in pytest or CI.';
+  'Open-source Python library that tests AI agents by their tool calls, with classical algorithms and an optional LLM judge. Offline, in pytest or CI.';
 
 const QUESTIONS = [
   {
@@ -23,7 +23,7 @@ const QUESTIONS = [
   },
   {
     q: 'How is it different from LLM evals?',
-    a: 'Most evals grade the final answer. RegShield checks the actions behind it, with deterministic rules and no API key. An optional LLM judge catches what rules cannot, like a wrong amount.',
+    a: 'Most evals ask another LLM to grade the final answer. RegShield checks the actions behind it with classical algorithms, such as graph cycle detection and partial-order checks, offline and with no API key. An optional LLM judge catches what rules cannot, like a wrong amount.',
   },
   {
     q: 'Which agent frameworks does it work with?',

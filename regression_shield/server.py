@@ -140,11 +140,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         settings = self.server.settings
         if path == "/api/status":
             judge = settings.judge()
+            try:  # when the report file last changed, so the dashboard fetches it only then
+                report_updated: float | None = os.path.getmtime(settings.report_path)
+            except OSError:
+                report_updated = None
             self._send_json({
                 "status": "online",
                 "version": __version__,
                 "uptime_seconds": round(time.time() - self.server.started_at, 1),
                 "port": self.server.server_port,
+                "report_updated": report_updated,
                 "llm_judge": {
                     "enabled": settings.use_llm_judge,
                     "has_api_key": bool(judge.api_key),

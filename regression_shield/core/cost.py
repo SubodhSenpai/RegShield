@@ -9,9 +9,10 @@ A trace can carry ``llm_calls`` next to its steps, one record per model call::
 (``cached_input_tokens``) and those written to the cache (``cache_write_tokens``).
 A recorded ``cost_usd`` (some providers, like OpenRouter, report the real cost)
 is used as is. Otherwise the call is priced from, in order: your pricing
-(``pricing=`` or ``[tool.regshield.pricing]``), then the bundled snapshot of public
-list prices in ``data/pricing.json``. Tool steps can carry a ``cost_usd`` too, or
-get one from ``pricing["tools"]`` (USD per call).
+(``pricing=`` or ``[tool.regshield.pricing]``), then a list of public list prices:
+the one bundled in ``data/pricing.json``, or a newer one saved by
+``regshield pricing refresh`` (``price_list_path()`` says which). Tool steps can
+carry a ``cost_usd`` too, or get one from ``pricing["tools"]`` (USD per call).
 
 The estimates use base list prices: batch discounts, long-context tiers and
 negotiated rates aren't modelled.
@@ -24,10 +25,19 @@ import functools
 import json
 import os
 import re
+import sys
+import tempfile
+import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 PRICING_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pricing.json")
+LITELLM_PRICES_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+_PRICE_LIST_SOURCE = "LiteLLM model price list (MIT license), https://github.com/BerriAI/litellm"
+_PRICE_LIST_UNITS = "USD per 1M tokens: [input, output, cached_input, cache_write]"
+_PRICED_MODES = {"chat", "completion", "responses"}
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Version and date suffixes that don't change the price: -2024-08-06, -20241022, @20250929, -latest
 _VERSION_SUFFIX = re.compile(r"(?:[-@](?:20\d{2}-?\d{2}-?\d{2}|latest)|-v\d+(?::\d+)?)$")
 _TOKEN_FIELDS = ("input_tokens", "output_tokens", "cached_input_tokens", "cache_write_tokens")
@@ -52,7 +62,7 @@ class ModelPrice:
     cached_input: float | None = None
     cache_write: float | None = None
     key: str = ""             # the pricing entry that matched
-    source: str = "snapshot"  # "pricing" (yours) or "snapshot" (bundled list prices)
+    source: str = "snapshot"  # "pricing" (yours), "snapshot" (list prices) or "local" (a local model: free)
 
     def cost(self, input_tokens: int = 0, output_tokens: int = 0,
              cached_input_tokens: int = 0, cache_write_tokens: int = 0) -> float:
@@ -65,13 +75,62 @@ class ModelPrice:
         return total / 1_000_000
 
 
-# -- the bundled snapshot ---------------------------------------------------------------
+# -- the price list -----------------------------------------------------------------------
 
-@functools.lru_cache(maxsize=1)
-def _snapshot() -> tuple[dict[str, ModelPrice], dict[str, ModelPrice], dict[str, ModelPrice], str]:
-    """(exact, lowercase, by model name without provider prefix, snapshot date)."""
+def _cache_dir() -> str:
+    override = os.environ.get("REGSHIELD_CACHE_DIR")
+    if override:
+        return override
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    elif sys.platform == "darwin":
+        base = os.path.join(os.path.expanduser("~"), "Library", "Caches")
+    else:
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "regshield")
+
+
+def user_price_file() -> str:
+    """Where ``regshield pricing refresh`` saves the latest list prices (``REGSHIELD_CACHE_DIR``
+    moves it)."""
+    return os.path.normpath(os.path.join(_cache_dir(), "pricing.json"))
+
+
+def _list_key(path: str) -> tuple[str, float]:
     try:
-        with open(PRICING_FILE, encoding="utf-8") as f:
+        return path, os.path.getmtime(path)
+    except OSError:
+        return path, -1.0
+
+
+def price_list_path() -> str:
+    """The price list in use: the ``price_list`` setting (``REGSHIELD_PRICE_LIST`` or the config
+    file) if set; else the list saved by ``regshield pricing refresh`` when it's at least as new
+    as the bundled one; else the bundled list."""
+    from regression_shield.config import setting
+
+    chosen = setting("price_list")
+    if chosen:
+        return str(chosen)
+    refreshed = user_price_file()
+    if os.path.isfile(refreshed):
+        exact, _, _, date = _load_list(*_list_key(refreshed))
+        if exact and _DATE.match(date) and date >= _load_list(*_list_key(PRICING_FILE))[3]:
+            return refreshed
+    return PRICING_FILE
+
+
+def _snapshot() -> tuple[dict[str, ModelPrice], dict[str, ModelPrice], dict[str, ModelPrice], str]:
+    return _load_list(*_list_key(price_list_path()))
+
+
+@functools.lru_cache(maxsize=4)
+def _load_list(path: str, mtime: float) -> tuple[dict[str, ModelPrice], dict[str, ModelPrice],
+                                                 dict[str, ModelPrice], str]:
+    """(exact, lowercase, by model name without provider prefix, prices_as_of) of a price list
+    file; ``mtime`` makes a changed file load again."""
+    try:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return {}, {}, {}, "unavailable"
@@ -98,8 +157,90 @@ def _snapshot() -> tuple[dict[str, ModelPrice], dict[str, ModelPrice], dict[str,
 
 
 def snapshot_date() -> str:
-    """The date of the bundled list prices."""
+    """The date of the list prices in use."""
     return _snapshot()[3]
+
+
+def _per_million(value: Any) -> float | None:
+    if not _is_number(value) or value < 0:
+        return None
+    return round(float(value) * 1_000_000, 6)
+
+
+def build_price_list(raw: dict[str, Any]) -> dict[str, list[float | None]]:
+    """LiteLLM's ``model_prices_and_context_window.json`` as a RegShield price list: chat and
+    completion models with an input and an output price, in USD per 1M tokens, as
+    ``[input, output, cached_input, cache_write]`` (a null cache price means "as input")."""
+    models: dict[str, list[float | None]] = {}
+    for name, entry in raw.items():
+        if not isinstance(entry, dict) or entry.get("mode") not in _PRICED_MODES:
+            continue
+        input_price = _per_million(entry.get("input_cost_per_token"))
+        output_price = _per_million(entry.get("output_cost_per_token"))
+        if input_price is None or output_price is None:
+            continue
+        models[name] = [input_price, output_price,
+                        _per_million(entry.get("cache_read_input_token_cost")),
+                        _per_million(entry.get("cache_creation_input_token_cost"))]
+    return dict(sorted(models.items()))
+
+
+def write_price_list(models: dict[str, list[float | None]], path: str, prices_as_of: str | None = None) -> None:
+    """Save a price list (one model per line, so diffs stay readable when prices change)."""
+    header = {
+        "prices_as_of": prices_as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "source": _PRICE_LIST_SOURCE,
+        "units": _PRICE_LIST_UNITS,
+    }
+    lines = [f"  {json.dumps(key)}: {json.dumps(value)}" for key, value in header.items()]
+    lines.append('  "models": {\n' + ",\n".join(f"    {json.dumps(name)}: {json.dumps(prices)}"
+                                                for name, prices in models.items()) + "\n  }")
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(prefix=".pricing-", suffix=".json", dir=directory)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as f:
+            f.write("{\n" + ",\n".join(lines) + "\n}\n")
+        os.replace(temporary, path)  # all or nothing: a reader never sees half a file
+    except BaseException:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+        raise
+
+
+def refresh_prices(source: str | None = None, output: str | None = None, *, timeout: float = 60.0) -> dict[str, Any]:
+    """Download LiteLLM's latest price list (or read ``source``: a file path or URL of it),
+    save it to ``output`` (default ``user_price_file()``, which RegShield then uses) and
+    return what changed: ``{"path", "models", "prices_as_of", "previous_as_of", "added",
+    "removed", "changed": {model: (old, new)}, "in_use"}``."""
+    source = source or LITELLM_PRICES_URL
+    if source.startswith(("http://", "https://")):
+        request = urllib.request.Request(source, headers={"User-Agent": "regshield"})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = json.loads(response.read())
+    else:
+        with open(source, encoding="utf-8") as f:
+            raw = json.load(f)
+    models = build_price_list(raw) if isinstance(raw, dict) else {}
+    if len(models) < 100:
+        raise ValueError(f"{source}: only {len(models)} priced models; is it LiteLLM's model_prices_and_context_window.json?")
+    previous = {key: [price.input, price.output, price.cached_input, price.cache_write]
+                for key, price in _snapshot()[0].items()}
+    previous_as_of = snapshot_date()
+    path = output or user_price_file()
+    prices_as_of = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    write_price_list(models, path, prices_as_of)
+    return {
+        "path": os.path.abspath(path),
+        "models": len(models),
+        "prices_as_of": prices_as_of,
+        "previous_as_of": previous_as_of,
+        "added": sorted(models.keys() - previous.keys()),
+        "removed": sorted(previous.keys() - models.keys()),
+        "changed": {name: (previous[name], models[name]) for name in sorted(models.keys() & previous.keys())
+                    if models[name] != previous[name]},
+        "in_use": os.path.abspath(price_list_path()) == os.path.abspath(path),
+    }
 
 
 # -- your pricing -----------------------------------------------------------------------
@@ -161,7 +302,12 @@ def _model_names(model: str) -> list[str]:
 
 def price_for(model: str, pricing: dict[str, Any] | None = None) -> ModelPrice | None:
     """The price of ``model``: your pricing first (exact name, then ``*`` patterns, most
-    specific first), then the bundled snapshot. None when it has no known price."""
+    specific first), then the list prices in use. None when it has no known price."""
+    return _price(model, pricing, _list_key(price_list_path()))
+
+
+def _price(model: str, pricing: dict[str, Any] | None, price_list: tuple[str, float]) -> ModelPrice | None:
+    """``price_for`` with the price list already chosen (once per summary, not once per call)."""
     if not model:
         return None
     names = _model_names(model)
@@ -176,7 +322,7 @@ def price_for(model: str, pricing: dict[str, Any] | None = None) -> ModelPrice |
         for pattern in patterns:
             if any(fnmatch.fnmatchcase(name.lower(), pattern.lower()) for name in names):
                 return ModelPrice(key=pattern, source="pricing", **yours[pattern])
-    return _snapshot_price(model.strip())
+    return _snapshot_price(model.strip(), price_list)
 
 
 # Who makes a model family: their own listings price it best ("anthropic.claude-..." on Bedrock,
@@ -210,15 +356,38 @@ def _rank(key: str, family: str) -> int:
     return 2 if path.startswith("openrouter") else 3
 
 
+# Local models cost nothing per token: Ollama-style names with a size or variant tag
+# ("qwen2.5:3b", "llama3.1:8b-instruct-q4_K_M", "gemma3:latest", "gemma3n:e2b") and models
+# served by Ollama, LM Studio, llamafile or your own vLLM. Bedrock ids ("...-v1:0"),
+# OpenRouter variants (":free") and fine-tune ids don't look like this.
+_LOCAL_TAG = re.compile(r"^(?:latest|e?\d+(?:\.\d+)?[bm]|q\d\w*|fp16|fp32|bf16)(?:[-_.].*)?$", re.IGNORECASE)
+_LOCAL_PROVIDERS = {"ollama", "ollama_chat", "lm_studio", "llamafile", "hosted_vllm"}
+LOCAL_PRICE = ModelPrice(input=0.0, output=0.0, key="local model", source="local")
+
+
+def is_local_model(model: str) -> bool:
+    """True for a model that runs locally or self-hosted, so it has no per-token price. Ollama's
+    ``*-cloud`` models (``gpt-oss:120b-cloud``) run on Ollama's servers, so they aren't local."""
+    provider = model.split("/", 1)[0].lower() if "/" in model else ""
+    name, separator, tag = model.rpartition(":")
+    if tag.lower().endswith("cloud"):
+        return False
+    return provider in _LOCAL_PROVIDERS or bool(separator and name and _LOCAL_TAG.match(tag))
+
+
 @functools.lru_cache(maxsize=8192)
-def _snapshot_price(model: str) -> ModelPrice | None:
-    exact, lower, _, _ = _snapshot()
+def _snapshot_price(model: str, price_list: tuple[str, float]) -> ModelPrice | None:
+    exact, lower, _, _ = _load_list(*price_list)
     names = _model_names(model)
     for name in names:
         if name in exact:
             return exact[name]
         if name.lower() in lower:
             return lower[name.lower()]
+    if is_local_model(model):  # never price a local model like a hosted one with a similar name
+        return LOCAL_PRICE
+    if model.lower().endswith(":free"):  # OpenRouter's free variants
+        return ModelPrice(input=0.0, output=0.0, key=":free variant", source="snapshot")
     family = re.split(r"[-_.:@ ]", names[-1].lower(), maxsplit=1)[0]
     family = re.sub(r"\d.*$", "", family) or family  # "llama3" -> "llama", but keep "o3"
     if family not in _MAKERS and re.split(r"[-_.:@ ]", names[-1].lower(), maxsplit=1)[0] in _MAKERS:
@@ -276,25 +445,82 @@ def format_usd(amount: float) -> str:
     return f"${amount:,.4f}" if amount < 100 else f"${amount:,.2f}"
 
 
+def _paid_step(step: dict[str, Any], tool_prices: dict[str, Any]) -> tuple[str, float] | None:
+    """(tool, usd) for a tool call that cost money, else None."""
+    raw_action = step.get("action")
+    action: dict[str, Any] = raw_action if isinstance(raw_action, dict) else {}
+    if action.get("type", "tool_call") != "tool_call" or not action.get("name") or step.get("blocked"):
+        return None  # a blocked call never ran, so it cost nothing
+    cost = step.get("cost_usd")
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+        return action["name"], float(cost)
+    if action["name"] in tool_prices:
+        return action["name"], float(tool_prices[action["name"]])
+    return None
+
+
+def _priced_call(call: dict[str, Any], pricing: dict[str, Any] | None,
+                 price_list: tuple[str, float]) -> tuple[float, str, str | None] | None:
+    """(usd, price source, pricing entry) of a normalized model call; None when it has no price."""
+    if "cost_usd" in call:
+        return float(call["cost_usd"]), "trace", None
+    price = _price(call["model"], pricing, price_list)
+    if price is None:
+        return None
+    return (price.cost(call["input_tokens"], call["output_tokens"], call["cached_input_tokens"],
+                       call["cache_write_tokens"]), price.source, price.key)
+
+
+class RunSpend:
+    """A run's spend so far, priced one record at a time as the run grows. The guard checks
+    the budget before every action, so it mustn't price the whole run again each time."""
+
+    def __init__(self, pricing: dict[str, Any] | None = None):
+        self.pricing = pricing or {}
+        self._restart(None, None)
+
+    def _restart(self, steps: list[Any] | None, llm_calls: list[Any] | None) -> None:
+        self._steps, self._calls = steps, llm_calls
+        self._seen_steps = self._seen_calls = 0
+        self.usd = 0.0
+        self.tokens = 0
+        self.llm_calls = 0
+
+    def update(self, steps: list[dict[str, Any]], llm_calls: list[Any]) -> RunSpend:
+        """Add what's new since the last update (a new list means a new run: start over)."""
+        if steps is not self._steps or llm_calls is not self._calls \
+                or len(steps) < self._seen_steps or len(llm_calls) < self._seen_calls:
+            self._restart(steps, llm_calls)
+        tool_prices = self.pricing.get("tools") or {}
+        for step in steps[self._seen_steps:]:
+            paid = _paid_step(step, tool_prices)
+            if paid:
+                self.usd += paid[1]
+        if len(llm_calls) > self._seen_calls:
+            price_list = _list_key(price_list_path())
+            for raw in llm_calls[self._seen_calls:]:
+                call = normalize_llm_call(raw)
+                if not call:
+                    continue
+                self.llm_calls += 1
+                self.tokens += call["input_tokens"] + call["output_tokens"]
+                priced = _priced_call(call, self.pricing, price_list)
+                if priced:
+                    self.usd += priced[0]
+        self._seen_steps, self._seen_calls = len(steps), len(llm_calls)
+        return self
+
+
 def summarize_cost(steps: list[dict[str, Any]], llm_calls: list[Any] | None,
                    pricing: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Tokens and cost of a run, or None when the trace records no usage and no paid tool."""
     calls = [call for call in (normalize_llm_call(c) for c in llm_calls or []) if call]
     tool_prices = (pricing or {}).get("tools") or {}
-    paid_steps = []
-    for step in steps:
-        raw_action = step.get("action")
-        action: dict[str, Any] = raw_action if isinstance(raw_action, dict) else {}
-        if action.get("type", "tool_call") != "tool_call" or not action.get("name"):
-            continue
-        cost = step.get("cost_usd")
-        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
-            paid_steps.append((action["name"], float(cost)))
-        elif action["name"] in tool_prices:
-            paid_steps.append((action["name"], float(tool_prices[action["name"]])))
+    paid_steps = [paid for paid in (_paid_step(step, tool_prices) for step in steps) if paid]
     if not calls and not paid_steps:
         return None
 
+    price_list = _list_key(price_list_path())
     models: dict[str, dict[str, Any]] = {}
     unpriced: list[str] = []
     llm_usd = 0.0
@@ -304,18 +530,14 @@ def summarize_cost(steps: list[dict[str, Any]], llm_calls: list[Any] | None,
         entry["calls"] += 1
         for field_name in ("input_tokens", "output_tokens", "cached_input_tokens"):
             entry[field_name] += call[field_name]
-        if "cost_usd" in call:
-            usd, source = float(call["cost_usd"]), "trace"
-        else:
-            price = price_for(call["model"], pricing)
-            if price is None:
-                if call["model"] not in unpriced:
-                    unpriced.append(call["model"])
-                continue
-            usd = price.cost(call["input_tokens"], call["output_tokens"],
-                             call["cached_input_tokens"], call["cache_write_tokens"])
-            source = price.source
-            entry["priced_as"] = price.key
+        priced = _priced_call(call, pricing, price_list)
+        if priced is None:
+            if call["model"] not in unpriced:
+                unpriced.append(call["model"])
+            continue
+        usd, source, key = priced
+        if key is not None:
+            entry["priced_as"] = key
         entry["usd"] += usd
         entry["priced_calls"] += 1
         entry["price_source"] = source if entry.get("price_source") in (None, source) else "mixed"

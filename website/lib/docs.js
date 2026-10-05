@@ -28,6 +28,14 @@ export const DOCS = [
     description: 'Record LangChain, LangGraph and smolagents agents, any Python agent loop, or any language over REST, and evaluate the trace.',
   },
   {
+    slug: 'production', file: 'production.md', title: 'In production', href: '/docs/production',
+    description: 'Block risky AI agent actions as they happen, record OpenAI, Anthropic and Gemini SDK calls without code changes, export runs to OpenTelemetry, and keep model prices current.',
+  },
+  {
+    slug: 'local-models', file: 'local-models.md', title: 'Local and self-hosted models', href: '/docs/local-models',
+    description: 'Install Ollama and run AI agents and the RegShield LLM judge on your own GPU or servers (vLLM, LM Studio, llama.cpp), with or without paid APIs.',
+  },
+  {
     slug: 'reference', file: 'reference.md', title: 'Reference', href: '/docs/reference',
     description: 'Every RegShield scenario field, the trace and report formats, metrics and thresholds, CLI flags, REST API and environment variables.',
   },

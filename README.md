@@ -1,6 +1,6 @@
 # RegShield
 
-RegShield tests AI agents by what they do. Give it a trace of your agent's run (tool calls, arguments, results, handoffs, approvals) and the rules the run should follow. It tells you which rule broke and at which step. The checks are deterministic, run offline in milliseconds, and fit into pytest or CI.
+RegShield tests AI agents by what they do. Give it a trace of your agent's run (tool calls, arguments, results, handoffs, approvals) and the rules the run should follow. It tells you which rule broke and at which step. The checks are deterministic, run offline in milliseconds, and fit into pytest or CI. In production, the same rules block risky actions while the agent runs. It works with paid APIs and with models you host yourself.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-16a34a)](https://github.com/SubodhSenpai/RegShield/blob/main/LICENSE)
@@ -80,12 +80,36 @@ The integrations record each model call's token usage with the trace, and `repor
 evaluate_trace({"scenario_id": "triage", "max_cost_usd": 0.05, "max_llm_calls": 8}, handler)
 ```
 
-For your own loop, call `recorder.llm_response(response)` after each model call. Paid tools can carry a price too: `@recorder.tool(cost_usd=0.005)`. See [Cost tracking](https://github.com/SubodhSenpai/RegShield/blob/main/docs/reference.md#cost-tracking).
+For your own loop, call `recorder.llm_response(response)` after each model call. Paid tools can carry a price too: `@recorder.tool(cost_usd=0.005)`. `regshield pricing refresh` downloads the latest list prices. See [Cost tracking](https://github.com/SubodhSenpai/RegShield/blob/main/docs/reference.md#cost-tracking).
+
+## In production
+
+The rules you test with can also protect the running agent:
+
+```python
+import regression_shield as rs
+
+guard = rs.Guard(scenario, rate_limits={"send_email": "10/minute"})       # the same scenario as your tests
+rs.instrument()                                                           # record OpenAI, Anthropic, Gemini SDK calls
+rs.export_traces(rs.OpenTelemetryExporter(endpoint="http://localhost:4318"), sample_rate=0.1)
+
+with rs.TraceRecorder(guard=guard) as recorder:
+    answer = run_my_agent(question)
+```
+
+What this setup gives you:
+
+- **Blocking:** a call that breaks a rule doesn't run. The agent is told why, the attempt is recorded, and a run that uses up its budget stops.
+- **Zero-code capture:** `instrument()` records raw SDK loops without code changes. LangChain agents use `handler.middleware()`, and smolagents uses `instrument_smolagents`.
+- **Export:** runs stream to any OpenTelemetry backend, a JSONL file or a webhook. Sampling and rate limits keep volumes down, and runs with problems are always kept.
+
+See [In production](https://github.com/SubodhSenpai/RegShield/blob/main/docs/production.md).
 
 ## Record your agent
 
 ```python
-from regression_shield import RegressionShieldCallbackHandler, TraceRecorder, evaluate_trace, instrument_smolagents
+from regression_shield import (RegressionShieldCallbackHandler, TraceRecorder, evaluate_trace, instrument,
+                               instrument_smolagents)
 
 # LangChain agents and LangGraph graphs: one callback
 handler = RegressionShieldCallbackHandler()
@@ -97,12 +121,32 @@ recorder = instrument_smolagents(agent)
 agent.run(task)
 report = evaluate_trace(scenario, recorder)
 
+# Your own loop on the OpenAI, Anthropic or Gemini SDK: no changes to it
+instrument()
+with TraceRecorder() as recorder:
+    run_my_agent(task)
+report = evaluate_trace(scenario, recorder)
+
 # Anything else: wrap your tools, then evaluate the recorder the same way
 recorder = TraceRecorder()
 search = recorder.wrap(search)
 ```
 
-The LangChain handler also records graph nodes, parallel calls, sub-agents, `transfer_to_*` handoffs and `HumanInTheLoopMiddleware` approvals. Install the extra you need: `pip install "regression-shield[langgraph]"` (or `[langchain]`, `[smolagents]`, `[all]`).
+The LangChain handler also records graph nodes, parallel calls, sub-agents, `transfer_to_*` handoffs and `HumanInTheLoopMiddleware` approvals. Install the extra you need: `pip install "regression-shield[langgraph]"` (or `[langchain]`, `[smolagents]`, `[otel]`, `[all]`).
+
+## Local models or paid APIs
+
+Use whatever suits you. RegShield records your agent the same way whether it calls OpenAI, Anthropic, Gemini or OpenRouter, or a model on your own GPU through Ollama, vLLM, LM Studio or llama.cpp:
+
+```bash
+ollama pull qwen2.5:7b      # after installing Ollama from ollama.com
+```
+
+```python
+client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")   # your agent, on a local model
+```
+
+Local models cost nothing per token in `report.cost`, while paid models are priced from list prices. The optional LLM judge can run locally too, with no API key (below). See [Local and self-hosted models](https://github.com/SubodhSenpai/RegShield/blob/main/docs/local-models.md) for the full setup.
 
 ## Run it in tests and CI
 
@@ -115,7 +159,7 @@ Or keep scenarios and recorded traces in a JSON file and run `regshield eval sce
 
 Agents don't behave the same on every run. `evaluate_runs(scenario, traces)` checks several runs of the same task and reports the pass rate; in a scenario file, give an item `traces` instead of `trace`.
 
-Thresholds, judge settings and prices can live in `pyproject.toml` under `[tool.regshield]` (or a `regshield.toml`), so tests and CI share them. See [Configuration](https://github.com/SubodhSenpai/RegShield/blob/main/docs/reference.md#configuration-file).
+Every setting can live in one file (thresholds, the judge, prices, logs, export), so tests, CI and production share it. Start one with `regshield config init`, then check what's in effect with `regshield config show`. API keys stay out of that file, in the environment or a `.env` it loads (`env_file = ".env"`). Any setting can be overridden with `REGSHIELD_<SETTING>`. See [Configuration](https://github.com/SubodhSenpai/RegShield/blob/main/docs/reference.md#configuration-file).
 
 ## Dashboard
 
@@ -129,14 +173,18 @@ regshield serve
 
 ## LLM judge (optional)
 
-Rules can't tell that "refunded $500" is wrong when the tool refunded $50. The LLM judge reads the whole trace and can. It works with any OpenAI-compatible API:
+Rules can't tell that "refunded $500" is wrong when the tool refunded $50. The LLM judge reads the whole trace and can. It works with any OpenAI-compatible API, paid or your own:
 
 ```bash
+# A paid API
 export OPENROUTER_API_KEY=sk-or-...     # or OPENAI_API_KEY for OpenAI
 regshield eval scenarios.json --llm-judge
+
+# Your own model: no key needed
+regshield eval scenarios.json --llm-judge --base-url http://localhost:11434/v1 --model qwen2.5:7b
 ```
 
-To use a local model, see [Judge answers with a local model](https://github.com/SubodhSenpai/RegShield/blob/main/docs/cookbook.md#judge-answers-with-a-local-model). RegShield reads keys from the environment and doesn't load `.env` files.
+To make it permanent, set `llm_judge`, `judge_base_url` and `judge_model` in `[tool.regshield]` (see [Local and self-hosted models](https://github.com/SubodhSenpai/RegShield/blob/main/docs/local-models.md)). RegShield reads keys from the environment, or from a `.env` file your config names with `env_file`.
 
 ## Documentation
 
@@ -144,6 +192,8 @@ To use a local model, see [Judge answers with a local model](https://github.com/
 - [Cookbook](https://github.com/SubodhSenpai/RegShield/blob/main/docs/cookbook.md): recipes for common checks, each with its real output
 - [Agentic patterns](https://github.com/SubodhSenpai/RegShield/blob/main/docs/patterns.md)
 - [Integrations](https://github.com/SubodhSenpai/RegShield/blob/main/docs/integrations.md)
+- [In production](https://github.com/SubodhSenpai/RegShield/blob/main/docs/production.md): block risky actions, record SDK calls, export runs, refresh prices
+- [Local and self-hosted models](https://github.com/SubodhSenpai/RegShield/blob/main/docs/local-models.md): install Ollama, run the agent and the judge on your own GPU or servers
 - [Reference](https://github.com/SubodhSenpai/RegShield/blob/main/docs/reference.md): every scenario field, CLI flag and environment variable
 - [Examples](https://github.com/SubodhSenpai/RegShield/tree/main/examples): nine agents run against a local LLM
 

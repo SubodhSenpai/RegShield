@@ -29,12 +29,18 @@ def instrument_smolagents(agent: Any, recorder: TraceRecorder | None = None) -> 
     calls it made, and calls made together in one step (which smolagents runs
     in parallel) share a parallel group. With managed agents, calling one is
     recorded as a handoff and every step is tagged with the agent that made it.
+
+    With a ``Guard`` on the recorder, a blocked tool call raises ``ActionBlocked``
+    instead of running (smolagents shows the error to the model), and a used-up
+    budget stops the run before the next model call.
     """
     recorder = recorder or TraceRecorder()
+    recorder.sdk_capture = False  # the step callbacks record model usage; instrument() would count it twice
     managed = dict(getattr(agent, "managed_agents", None) or {})
     owner = (getattr(agent, "name", None) or "manager") if managed else None
     _wrap_tools(agent, recorder, owner, final=True)
     _attach_step_callback(agent, recorder, owner)
+    _guard_model_calls(agent, recorder)
     for name, sub_agent in managed.items():
         _instrument_managed(sub_agent, name, recorder, parent=owner)
 
@@ -43,16 +49,39 @@ def instrument_smolagents(agent: Any, recorder: TraceRecorder | None = None) -> 
     def run(*args: Any, **kwargs: Any) -> Any:
         if kwargs.get("reset", True):
             recorder.reset()
-        result = original_run(*args, **kwargs)
+        try:
+            result = original_run(*args, **kwargs)
+        except BaseException as err:
+            recorder.end_run(error=err)
+            raise
         # With stream=True the answer arrives through the final_answer tool instead
         if not inspect.isgenerator(result):
             output = getattr(result, "output", result)  # RunResult when return_full_result=True
             if output is not None:
                 recorder.final_answer(str(output))
+            recorder.end_run()
         return result
 
     agent.run = run
     return recorder
+
+
+def _guard_model_calls(agent: Any, recorder: TraceRecorder) -> None:
+    """With a guard, check the run's budget before each of the agent's model calls."""
+    model = getattr(agent, "model", None)
+    if recorder.guard is None or model is None or getattr(model, "_regshield_budget", None) is recorder:
+        return
+    for method in ("generate", "generate_stream"):
+        original = getattr(model, method, None)
+        if original is None:
+            continue
+
+        def guarded(*args: Any, _original: Any = original, **kwargs: Any) -> Any:
+            recorder.check_llm()  # raises ActionBlocked when the budget is used up
+            return _original(*args, **kwargs)
+
+        setattr(model, method, guarded)
+    model._regshield_budget = recorder
 
 
 def _wrap_tools(agent: Any, recorder: TraceRecorder, owner: str | None, final: bool) -> None:
@@ -128,6 +157,7 @@ def _instrument_managed(sub_agent: Any, name: str, recorder: TraceRecorder, pare
     """Calling a managed agent is a handoff from its manager."""
     _wrap_tools(sub_agent, recorder, name, final=False)
     _attach_step_callback(sub_agent, recorder, name)
+    _guard_model_calls(sub_agent, recorder)
     original_run = sub_agent.run
 
     def run(*args: Any, **kwargs: Any) -> Any:

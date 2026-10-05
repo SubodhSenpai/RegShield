@@ -174,3 +174,5 @@ The dashboard at `http://localhost:8000` shows each scenario's metrics, pattern 
 - Plans, handoffs, approvals, routers, graphs or critique loops: [Agentic patterns](patterns.md)
 - Framework details: [Integrations](integrations.md)
 - Nine real agents run against a local LLM: [Examples](../examples/README.md)
+- Run your agent and the LLM judge on your own GPU instead of a paid API: [Local and self-hosted models](local-models.md)
+- Guard agents while they run, and send runs to your monitoring: [In production](production.md)

@@ -6,10 +6,11 @@ Every integration produces a trace for `evaluate_trace(scenario, trace)`. The La
 - [LangGraph](#langgraph)
 - [smolagents](#smolagents)
 - [Any framework: `TraceRecorder`](#any-framework-tracerecorder)
+- [Raw OpenAI, Anthropic and Gemini SDK loops: `instrument()`](#raw-openai-anthropic-and-gemini-sdk-loops-instrument)
 - [The `@shield` decorator](#the-shield-decorator)
 - [REST API (any language)](#rest-api-any-language)
 
-Runnable versions of everything on this page, using a local LLM, are in [examples/](../examples/README.md).
+Runnable versions of everything on this page, using a local LLM, are in [examples/](../examples/README.md). To block risky calls while the agent runs, and to send runs to a monitoring service, see [In production](production.md).
 
 ---
 
@@ -40,6 +41,16 @@ The handler records:
 - each model call's token usage (`handler.llm_calls`: model, input and output tokens, cached tokens, and the reported cost with OpenRouter), for [cost tracking](reference.md#cost-tracking) and budgets
 
 Each new top-level run starts a fresh trace, so one handler can be reused.
+
+**Block risky calls as they happen.** Give the handler a [`Guard`](production.md#block-risky-actions) and add its middleware. A blocked call doesn't run: the agent gets an error tool message saying why, and the step is recorded as `blocked`. A used-up budget stops the agent with `ActionBlocked`:
+
+```python
+from regression_shield import Guard, RegressionShieldCallbackHandler
+
+handler = RegressionShieldCallbackHandler(guard=Guard(scenario, rate_limits={"send_wire": "5/hour"}))
+agent = create_agent(model, tools=[verify_identity, check_balance, send_wire], middleware=[handler.middleware()])
+agent.invoke({"messages": [...]}, config={"callbacks": [handler]})
+```
 
 ## LangGraph
 
@@ -76,6 +87,8 @@ if result.get("__interrupt__"):
 
 report = evaluate_trace({"scenario_id": "refund", "requires_approval": ["issue_refund"]}, handler)
 ```
+
+**A guard in your own graph.** With a `ToolNode`, pass the handler's hook: `ToolNode(tools, wrap_tool_call=handler.wrap_tool_call)` (and `awrap_tool_call` for async graphs).
 
 **Your own events.** The handler is a [`TraceRecorder`](#any-framework-tracerecorder), so a node can add plans, routes, drafts or critiques to the same trace:
 
@@ -117,6 +130,8 @@ This works for `CodeAgent`, whose tools are called from Python code the model wr
 - each step's token usage (`recorder.llm_calls`, with the agent's `model_id`), including planning steps, for [cost tracking](reference.md#cost-tracking)
 
 Each `agent.run` starts a new trace, unless you pass `reset=False` to continue the conversation.
+
+With a guard, `instrument_smolagents(agent, TraceRecorder(guard=guard))` blocks risky calls before they run. smolagents shows the reason to the model, which can try something else. A used-up budget stops the run before the next model call.
 
 If you couldn't instrument a `ToolCallingAgent` before it ran, rebuild the trace from its memory afterwards:
 
@@ -181,6 +196,31 @@ else:
 The recorder is thread-safe. When agents run concurrently, pass `agent=` to `wrap` or `tool_call` so each call is credited to the agent that made it, rather than to whichever agent was last handed control.
 
 To connect another framework, call the matching method from its hooks: `handoff` when a task moves to another agent, `approval` wherever a person approves an action, and so on.
+
+With `TraceRecorder(guard=guard)`, wrapped tools are checked before they run, and a blocked one raises `ActionBlocked` without running. Before running a tool any other way, call `recorder.check(name, args)`; before a model call, `recorder.check_llm()` stops a run whose budget is used up.
+
+## Raw OpenAI, Anthropic and Gemini SDK loops: `instrument()`
+
+If your agent calls the OpenAI, Anthropic or Gemini SDK directly, you don't need the `llm_response`, `thought` and `final_answer` lines above. Instrument the SDKs once, and record each run with a `with` block:
+
+```python
+import regression_shield as rs
+
+rs.instrument()                                  # once, at startup
+
+with rs.TraceRecorder() as recorder:
+    answer = run_my_agent(question)              # unchanged: plain SDK calls
+report = rs.evaluate_trace(scenario, recorder)
+```
+
+Every model call in the block is recorded with its token usage. This covers OpenAI chat completions and the Responses API, Anthropic messages and Gemini `generate_content`, sync, async and streamed. The tool calls are rebuilt from the conversation itself:
+
+- what the model asked for;
+- the result your code sent back in the next request;
+- the model's text before the calls, as their thought;
+- a reply without tool calls, as the final answer.
+
+Gemini's automatic function calling is recorded turn by turn. With a guard on the recorder, a reply asking for a blocked call raises `ActionBlocked` from the SDK call, before your code can run it. Details and limits are in [In production](production.md#record-sdk-calls-with-no-code-changes).
 
 ## The `@shield` decorator
 

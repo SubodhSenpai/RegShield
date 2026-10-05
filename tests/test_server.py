@@ -188,6 +188,14 @@ def test_status_reports_version_and_judge(dashboard):
     assert status["llm_judge"]["enabled"] is False
 
 
+def test_status_says_when_the_report_last_changed(dashboard):
+    """The dashboard polls this, and fetches the report only when it changed."""
+    assert json.loads(request(dashboard, "GET", "/api/status")[2])["report_updated"] is None
+    report = evaluate_trace({"scenario_id": "LIVE", "forbidden_tools": ["deploy"]}, TRACE)
+    assert report.sync_to_dashboard(f"http://127.0.0.1:{dashboard.server_port}") is True
+    assert isinstance(json.loads(request(dashboard, "GET", "/api/status")[2])["report_updated"], float)
+
+
 def test_start_server_rejects_the_judge_without_a_key(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

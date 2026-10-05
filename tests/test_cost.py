@@ -36,16 +36,47 @@ def test_snapshot_prices(model, key):
 
 
 def test_unknown_models_have_no_price():
-    assert price_for("qwen2.5-16k:3b") is None
+    assert price_for("my-company-model") is None
+    assert price_for("phi4") is None  # without a tag it could be local or hosted: you decide
     assert price_for("") is None
+
+
+@pytest.mark.parametrize("model", [
+    "qwen2.5-16k:3b", "llama3.1:8b-instruct-q4_K_M", "gemma3:latest", "gemma3n:e2b", "smollm2:135m",
+    "deepseek-r1:7b",  # not the hosted 671B DeepSeek-R1's price
+    "ollama_chat/phi4", "lm_studio/qwen2.5-7b-instruct", "hosted_vllm/my-model",
+])
+def test_local_models_are_free(model):
+    price = price_for(model)
+    assert (price.source, price.key, price.cost(1_000_000, 1_000_000)) == ("local", "local model", 0.0)
+
+
+@pytest.mark.parametrize("model, key", [
+    ("anthropic.claude-3-5-sonnet-20240620-v1:0", "anthropic.claude-3-5-sonnet-20240620-v1:0"),  # Bedrock ":0"
+    ("ft:gpt-4o-mini-2024-07-18:acme::9xyz", "ft:gpt-4o-mini-2024-07-18"),                     # a fine-tune
+])
+def test_colon_names_that_are_not_local(model, key):
+    assert price_for(model).key == key and price_for(model).input > 0
+
+
+def test_ollama_cloud_models_are_not_local():
+    from regression_shield.core.cost import is_local_model
+
+    assert not is_local_model("gpt-oss:120b-cloud")  # runs on Ollama's servers
+    assert is_local_model("gpt-oss:20b")
+
+
+def test_openrouter_free_variants_are_free():
+    price = price_for("meta-llama/llama-3.1-8b-instruct:free")
+    assert (price.input, price.output, price.key) == (0.0, 0.0, ":free variant")
 
 
 def test_your_pricing_wins_and_supports_wildcards():
     pricing = validate_pricing({"models": {"gpt-4o-mini": {"input": 1, "output": 2},
-                                           "qwen*": {"input": 0, "output": 0}}})
+                                           "qwen*": {"input": 3, "output": 15}}})
     assert price_for("gpt-4o-mini", pricing).input == 1
-    local = price_for("qwen2.5-16k:3b", pricing)
-    assert (local.key, local.source, local.cost(1_000_000, 1_000_000)) == ("qwen*", "pricing", 0.0)
+    local = price_for("qwen2.5-16k:3b", pricing)  # a local model priced like the API it stands in for
+    assert (local.key, local.source, local.cost(1_000_000, 1_000_000)) == ("qwen*", "pricing", 18.0)
 
 
 def test_cost_formula_with_cached_and_written_tokens():

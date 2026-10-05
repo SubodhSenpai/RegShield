@@ -7,7 +7,7 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
-from regression_shield.config import THRESHOLD_KEYS, load_config, setting
+from regression_shield.config import THRESHOLD_KEYS, apply_log_level, load_config, setting
 from regression_shield.core.cost import merge_pricing, summarize_cost
 from regression_shield.core.judge import LLMJudge
 from regression_shield.core.metrics import (
@@ -119,6 +119,7 @@ class AgentTraceEvaluator:
         pricing: dict[str, Any] | None = None,
     ):
         config = load_config()
+        apply_log_level(config)
         explicit = {"min_tool_selection": min_tool_selection, "min_argument_correctness": min_argument_correctness,
                     "min_call_ordering": min_call_ordering, "min_step_efficiency": min_step_efficiency,
                     "min_reasoning_faithfulness": min_reasoning_faithfulness}
@@ -132,9 +133,17 @@ class AgentTraceEvaluator:
         if setting("llm_judge", use_llm_judge, config):
             self.judge = LLMJudge(api_key=api_key, model=model, base_url=base_url, timeout=judge_timeout,
                                   pricing=self.pricing)
-            if not self.judge.api_key:  # the judge also reads OPENROUTER_API_KEY / OPENAI_API_KEY
-                raise ValueError("use_llm_judge=True needs an API key: pass api_key= or set "
-                                 "OPENROUTER_API_KEY / OPENAI_API_KEY.")
+            if not self.judge.api_key and self.judge.needs_key:  # it also reads the keys from the environment
+                if self.judge.base_url in (LLMJudge.DEFAULT_BASE_URL, LLMJudge.OPENAI_BASE_URL):
+                    raise ValueError("use_llm_judge=True needs an API key: pass api_key= or set "
+                                     "OPENROUTER_API_KEY / OPENAI_API_KEY. A self-hosted model (Ollama, vLLM...) "
+                                     "needs no key: set judge_base_url and judge_model instead.")
+                raise ValueError(f"The LLM judge's server {self.judge.base_url} isn't on your machine or a private "
+                                 "network, so it needs an API key: pass api_key= or --api-key, or set OPENAI_API_KEY "
+                                 "(any text, if your server doesn't check keys).")
+            if self.judge.self_hosted and self.judge.model_is_default:
+                raise ValueError(f"The LLM judge uses your own server ({self.judge.base_url}): set judge_model "
+                                 "(or JUDGE_MODEL, --model) to a model it serves, e.g. 'qwen2.5:7b'.")
 
     def evaluate(self, scenario: ScenarioSpec | dict[str, Any], trace: Any) -> EvaluationReport:
         """Evaluate one trace. ``trace`` is a list of steps, a dict with ``steps`` and
@@ -244,6 +253,11 @@ class AgentTraceEvaluator:
             details["cost"] = cost
         if llm_calls:
             details["llm_calls"] = llm_calls
+        blocked = [{"step": step.get("step_index", position), "tool": step["action"].get("name"), **step["blocked"]}
+                   for position, step in enumerate(steps, 1)
+                   if isinstance(step.get("blocked"), dict) and isinstance(step.get("action"), dict)]
+        if blocked:
+            details["blocked_actions"] = blocked  # calls a guard stopped while the agent ran
         return EvaluationReport(
             scenario_id=scenario_id,
             title=spec.get("title") or "",

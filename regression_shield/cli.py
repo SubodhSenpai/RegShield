@@ -1,4 +1,6 @@
-"""``regshield`` command line: evaluate scenario files, run the demo, serve the dashboard.
+"""``regshield`` command line: evaluate scenario files, run the demo, serve the dashboard,
+update the model prices used for cost (``regshield pricing refresh``), and see or start
+your settings file (``regshield config show`` / ``init``).
 
 Scenario file format (JSON): a list of items, each with a scenario and the trace to check::
 
@@ -210,13 +212,152 @@ def build_parser() -> argparse.ArgumentParser:
                             "0.0.0.0 allows other machines; the dashboard has no authentication")
     serve.add_argument("--no-open", dest="open_browser", action="store_false", help="don't open a browser")
     _add_judge_options(serve.add_argument_group("LLM judge for traces sent to the API (optional)"))
+
+    pricing = commands.add_parser("pricing", help="update or look up the model prices used for cost")
+    pricing_commands = pricing.add_subparsers(dest="pricing_command", required=True)
+    refresh = pricing_commands.add_parser("refresh", parents=[common],
+                                          help="download the latest list prices (LiteLLM's price list)")
+    refresh.add_argument("--from", dest="source", metavar="FILE_OR_URL",
+                         help="read a copy of LiteLLM's model_prices_and_context_window.json instead of downloading it")
+    refresh.add_argument("--output", metavar="PATH",
+                         help="where to save the list (default: your user cache, which RegShield then uses)")
+    show = pricing_commands.add_parser("show", parents=[common], help="show the price RegShield uses for models")
+    show.add_argument("models", nargs="+", metavar="MODEL")
+
+    config = commands.add_parser("config", help="see or start your settings file")
+    config_commands = config.add_subparsers(dest="config_command", required=True)
+    config_commands.add_parser("show", parents=[common],
+                               help="every setting in effect, and where it comes from (file, environment, default)")
+    init = config_commands.add_parser("init", parents=[common],
+                                      help="write regshield.toml with every setting, and .env.example for API keys")
+    init.add_argument("--dir", default=".", help="where to write them (default: the current directory)")
+    init.add_argument("--force", action="store_true", help="overwrite files that already exist")
     return parser
+
+
+def _shown(value: object) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, dict):  # pricing tables
+        models, tools = value.get("models") or {}, value.get("tools") or {}
+        return f"{len(models)} model price(s), {len(tools)} tool price(s)"
+    return str(value)
+
+
+def run_config(args: argparse.Namespace) -> int:
+    """``regshield config show`` and ``regshield config init``."""
+    import os
+
+    from regression_shield import config as settings
+    from regression_shield.core.judge import LLMJudge
+
+    if args.config_command == "init":
+        targets = ((os.path.join(args.dir, "regshield.toml"), settings.CONFIG_TEMPLATE),
+                   (os.path.join(args.dir, ".env.example"), settings.ENV_TEMPLATE))
+        for path, text in targets:
+            if os.path.exists(path) and not args.force:
+                print(f"{path} already exists; left as it is (--force overwrites it)")
+                continue
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+            print(f"Wrote {path}")
+        gitignore = os.path.join(args.dir, ".gitignore")
+        ignored = False
+        if os.path.exists(gitignore):
+            with open(gitignore, encoding="utf-8") as f:
+                ignored = any(line.strip() in (".env", "/.env", ".env*", "*.env") for line in f)
+        print("\nNext: uncomment the settings you need in regshield.toml. For API keys, copy .env.example to .env, "
+              'fill it in and set env_file = ".env".' + ("" if ignored else " Add .env to .gitignore so keys stay out of git."))
+        print("Check the result with `regshield config show`.")
+        return 0
+
+    config_path = settings.find_config_file()
+    config = settings.load_config()
+    print(f"Config file: {os.path.abspath(config_path) if config_path else 'none (all defaults; `regshield config init` writes one)'}")
+    env_file = settings.env_setting("env_file") or config.get("env_file")
+    if env_file:
+        print(f"Env file:    {env_file}")
+    print("\nSetting (highest priority first: arguments, environment, file, defaults)")
+    project = os.path.dirname(os.path.abspath(config_path)) if config_path else os.getcwd()
+    for name in settings.SETTINGS:
+        value, source = settings.setting_source(name, config, config_path)
+        if isinstance(value, str) and os.path.isabs(value) and os.path.abspath(value).startswith(project + os.sep):
+            value = os.path.relpath(value, project)  # paths inside the project, kept short
+        print(f"  {name:<28} {_shown(value):<34} {source}")
+    print("\nAPI keys (never stored in the config file)")
+    for variable in ("OPENROUTER_API_KEY", "OPENAI_API_KEY"):
+        origin = settings.env_file_variables.get(variable)
+        state = (f"set (from {os.path.basename(origin)})" if origin else "set") if os.environ.get(variable) else "not set"
+        print(f"  {variable:<28} {state}")
+    judge = LLMJudge()
+    key = "your own server, no key needed" if judge.self_hosted else ("key set" if judge.api_key else "needs a key")
+    print(f"\nLLM judge would use: {judge.model} at {judge.base_url} ({key})")
+    return 0
+
+
+def _per_million(prices: list[float | None]) -> str:
+    text = f"${prices[0]:g} in / ${prices[1]:g} out"
+    if prices[2] is not None:
+        text += f" / ${prices[2]:g} cached"
+    return text
+
+
+def run_pricing(args: argparse.Namespace) -> int:
+    """``regshield pricing refresh`` and ``regshield pricing show``."""
+    from regression_shield.config import load_config
+    from regression_shield.core.cost import merge_pricing, price_for, price_list_path, refresh_prices, snapshot_date
+
+    if args.pricing_command == "refresh":
+        print(f"Reading {args.source}" if args.source else "Downloading LiteLLM's price list...")
+        result = refresh_prices(args.source, args.output)
+        print(f"Saved prices for {result['models']:,} models (as of {result['prices_as_of']}) to {result['path']}")
+        changed = result["changed"]
+        print(f"Since the previous list ({result['previous_as_of']}): {len(result['added'])} new, "
+              f"{len(changed)} changed, {len(result['removed'])} removed")
+        for name, (old, new) in list(changed.items())[:10]:
+            print(f"  {name}: {_per_million(old)} -> {_per_million(new)} per 1M tokens")
+        if len(changed) > 10:
+            print(f"  ... and {len(changed) - 10} more")
+        if result["in_use"]:
+            print("RegShield now prices calls with this list.")
+        else:
+            print(f"To use it, set REGSHIELD_PRICE_LIST={result['path']}")
+        return 0
+
+    pricing = merge_pricing(load_config().get("pricing"))
+    print(f"Price list: {price_list_path()} (prices as of {snapshot_date()})")
+    missing = 0
+    for model in args.models:
+        price = price_for(model, pricing)
+        if price is None:
+            missing += 1
+            print(f"  {model}: no price; add it under [tool.regshield.pricing.models]")
+            continue
+        if price.source == "local":
+            print(f"  {model}: free, a local model (give it a price to estimate what your GPU costs)")
+            continue
+        where = "your pricing" if price.source == "pricing" else "price list"
+        prices = [price.input, price.output, price.cached_input, price.cache_write]
+        print(f"  {model}: {_per_million(prices)} per 1M tokens ({where}: {price.key})")
+    return 1 if missing else 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     enable_logging("DEBUG" if args.verbose else "WARNING")
     try:
+        if not args.verbose and args.command != "config":
+            from regression_shield.config import setting
+
+            configured = setting("log_level")
+            if configured:
+                enable_logging(configured)
+        if args.command == "config":
+            return run_config(args)
+        if args.command == "pricing":
+            return run_pricing(args)
         if args.command == "eval":
             return run_file(args.file, _evaluator(args), args.report, args.min_pass_rate)
         if args.command == "demo":

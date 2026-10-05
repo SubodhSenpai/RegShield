@@ -8,7 +8,7 @@ import pytest
 
 from regression_shield import AgentTraceEvaluator, LLMJudge, evaluate_trace
 from regression_shield.cli import main
-from regression_shield.config import find_config_file, load_config
+from regression_shield.config import find_config_file, load_config, load_env_file
 
 DEPLOY = {"scenario_id": "deploy_gate", "expected_tools": ["run_tests", "deploy"], "optimal_step_count": 1}
 GOOD = [{"action": {"name": "run_tests", "args": {}}, "observation": "42 passed"},
@@ -338,6 +338,27 @@ def test_config_init_writes_every_setting_and_an_env_example(tmp_path, capsys):
     assert set(load_config()) == set(SETTINGS)
     assert main(["config", "init"]) == 0  # existing files are kept
     assert "already exists" in capsys.readouterr().out
+
+
+def rewrite_within_the_same_tick(path, text):
+    """Rewrite a file keeping its modification time, as two quick writes can on Linux,
+    where the timestamp only moves every few milliseconds."""
+    before = os.stat(path)
+    write(path, text)
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+
+def test_a_quick_rewrite_of_the_same_size_is_still_seen(tmp_path):
+    config_file = write(tmp_path / "regshield.toml", "min_tool_selection = 0.91\n")
+    assert load_config(config_file)["min_tool_selection"] == 0.91
+    rewrite_within_the_same_tick(tmp_path / "regshield.toml", "min_tool_selection = 0.92\n")
+    assert load_config(config_file)["min_tool_selection"] == 0.92
+
+    env_file = write(tmp_path / ".env", "REGSHIELD_JUDGE_TIMEOUT=91\n")
+    load_env_file(env_file)
+    assert os.environ["REGSHIELD_JUDGE_TIMEOUT"] == "91"
+    rewrite_within_the_same_tick(tmp_path / ".env", "REGSHIELD_JUDGE_TIMEOUT=92\n")
+    assert load_env_file(env_file) == {"REGSHIELD_JUDGE_TIMEOUT": "92"}
 
 
 def test_config_show_says_where_each_setting_comes_from(tmp_path, monkeypatch, capsys):

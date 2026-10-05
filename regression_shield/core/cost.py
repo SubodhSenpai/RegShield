@@ -96,11 +96,18 @@ def user_price_file() -> str:
     return os.path.normpath(os.path.join(_cache_dir(), "pricing.json"))
 
 
-def _list_key(path: str) -> tuple[str, float]:
+# A price list as the caches see it: its path, and the file's modification time (ns), size
+# and id, so a changed file loads again. `regshield pricing refresh` replaces the file in
+# one step, which gives it a new id even when the time and size come out the same.
+_ListKey = tuple[str, tuple[int, int, int]]
+
+
+def _list_key(path: str) -> _ListKey:
     try:
-        return path, os.path.getmtime(path)
+        info = os.stat(path)
     except OSError:
-        return path, -1.0
+        return path, (-1, -1, -1)
+    return path, (info.st_mtime_ns, info.st_size, info.st_ino)
 
 
 def price_list_path() -> str:
@@ -125,10 +132,10 @@ def _snapshot() -> tuple[dict[str, ModelPrice], dict[str, ModelPrice], dict[str,
 
 
 @functools.lru_cache(maxsize=4)
-def _load_list(path: str, mtime: float) -> tuple[dict[str, ModelPrice], dict[str, ModelPrice],
-                                                 dict[str, ModelPrice], str]:
+def _load_list(path: str, version: tuple[int, int, int]) -> tuple[dict[str, ModelPrice], dict[str, ModelPrice],
+                                                                dict[str, ModelPrice], str]:
     """(exact, lowercase, by model name without provider prefix, prices_as_of) of a price list
-    file; ``mtime`` makes a changed file load again."""
+    file; ``version`` (from ``_list_key``) makes a changed file load again."""
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -306,7 +313,7 @@ def price_for(model: str, pricing: dict[str, Any] | None = None) -> ModelPrice |
     return _price(model, pricing, _list_key(price_list_path()))
 
 
-def _price(model: str, pricing: dict[str, Any] | None, price_list: tuple[str, float]) -> ModelPrice | None:
+def _price(model: str, pricing: dict[str, Any] | None, price_list: _ListKey) -> ModelPrice | None:
     """``price_for`` with the price list already chosen (once per summary, not once per call)."""
     if not model:
         return None
@@ -376,7 +383,7 @@ def is_local_model(model: str) -> bool:
 
 
 @functools.lru_cache(maxsize=8192)
-def _snapshot_price(model: str, price_list: tuple[str, float]) -> ModelPrice | None:
+def _snapshot_price(model: str, price_list: _ListKey) -> ModelPrice | None:
     exact, lower, _, _ = _load_list(*price_list)
     names = _model_names(model)
     for name in names:
@@ -460,7 +467,7 @@ def _paid_step(step: dict[str, Any], tool_prices: dict[str, Any]) -> tuple[str, 
 
 
 def _priced_call(call: dict[str, Any], pricing: dict[str, Any] | None,
-                 price_list: tuple[str, float]) -> tuple[float, str, str | None] | None:
+                 price_list: _ListKey) -> tuple[float, str, str | None] | None:
     """(usd, price source, pricing entry) of a normalized model call; None when it has no price."""
     if "cost_usd" in call:
         return float(call["cost_usd"]), "trace", None

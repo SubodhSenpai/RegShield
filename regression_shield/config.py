@@ -77,9 +77,11 @@ ENV_ALIASES = {"judge_model": ("JUDGE_MODEL",), "judge_timeout": ("JUDGE_TIMEOUT
 _PATH_KEYS = ("price_list", "env_file", "export_jsonl_path")
 _LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
 _FILE_NAMES = ("regshield.toml", "pyproject.toml")
-_cache: dict[tuple[str, float], dict[str, Any]] = {}
-_has_table: dict[tuple[str, float], bool] = {}
-_loaded_env_files: dict[str, float] = {}  # env file -> mtime it was loaded at
+# Config and env files are small, so their caches compare content rather than timestamps:
+# a timestamp can stay the same through two quick writes (Linux keeps it to a few ms)
+_cache: dict[str, tuple[bytes, dict[str, Any]]] = {}  # config file -> (content, settings)
+_has_table: dict[str, tuple[bytes, bool]] = {}         # pyproject.toml -> (content, has [tool.regshield])
+_loaded_env_files: dict[str, bytes] = {}              # env file -> the content it was loaded from
 env_file_variables: dict[str, str] = {}   # variable -> the env file that set it
 _log_level_applied = False
 
@@ -91,23 +93,33 @@ def env_names(name: str) -> tuple[str, ...]:
 
 def _pyproject_has_regshield(path: str) -> bool:
     """True if a pyproject.toml has a [tool.regshield] table (cached until the file changes)."""
-    key = (path, os.path.getmtime(path))
-    if key not in _has_table:
+    try:
+        content = _read(path)
+    except OSError as err:
+        logger.warning("Could not read %s: %s", path, err)
+        return False
+    cached = _has_table.get(path)
+    if cached is None or cached[0] != content:
         try:
-            _has_table[key] = "regshield" in _load_toml(path).get("tool", {})
-        except (OSError, ValueError) as err:
+            has_table = "regshield" in _parse_toml(content).get("tool", {})
+        except ValueError as err:
             logger.warning("Could not read %s: %s", path, err)
-            _has_table[key] = False
-    return _has_table[key]
+            has_table = False
+        _has_table[path] = cached = (content, has_table)
+    return cached[1]
 
 
-def _load_toml(path: str) -> dict[str, Any]:
+def _read(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _parse_toml(content: bytes) -> dict[str, Any]:
     if sys.version_info >= (3, 11):
         import tomllib
     else:  # pragma: no cover - Python 3.10
         import tomli as tomllib
-    with open(path, "rb") as f:
-        return tomllib.load(f)
+    return tomllib.loads(content.decode("utf-8"))
 
 
 def find_config_file(start: str | None = None) -> str | None:
@@ -177,34 +189,34 @@ def load_env_file(path: str) -> dict[str, str]:
         logger.debug("env_file %s doesn't exist; skipped", path)
         return {}
     try:
-        mtime = os.path.getmtime(path)
+        content = _read(path)
     except OSError as err:
         raise ValueError(f"env_file {path} can't be read: {err}") from err
-    if _loaded_env_files.get(path) == mtime:
+    if _loaded_env_files.get(path) == content:
         return {}
     loaded: dict[str, str] = {}
-    with open(path, encoding="utf-8-sig") as f:
-        for number, raw in enumerate(f, 1):
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("export "):
-                line = line[len("export "):].lstrip()
-            name, separator, value = line.partition("=")
-            name = name.strip()
-            if not separator or not name.replace("_", "").isalnum():
-                raise ValueError(f"{path}, line {number}: expected NAME=value")
-            value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            elif " #" in value:
-                value = value.split(" #", 1)[0].rstrip()  # a comment after an unquoted value
-            # The real environment wins; a value this file set earlier follows the file
-            if value and (name not in os.environ or env_file_variables.get(name) == path):
-                os.environ[name] = value
-                env_file_variables[name] = path
-                loaded[name] = value
-    _loaded_env_files[path] = mtime
+    text = content.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
+    for number, raw in enumerate(text.split("\n"), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        name, separator, value = line.partition("=")
+        name = name.strip()
+        if not separator or not name.replace("_", "").isalnum():
+            raise ValueError(f"{path}, line {number}: expected NAME=value")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        elif " #" in value:
+            value = value.split(" #", 1)[0].rstrip()  # a comment after an unquoted value
+        # The real environment wins; a value this file set earlier follows the file
+        if value and (name not in os.environ or env_file_variables.get(name) == path):
+            os.environ[name] = value
+            env_file_variables[name] = path
+            loaded[name] = value
+    _loaded_env_files[path] = content
     logger.debug("Loaded %d variable(s) from %s", len(loaded), path)
     return loaded
 
@@ -219,13 +231,13 @@ def load_config(path: str | None = None) -> dict[str, Any]:
     if not path:
         return {}
     try:
-        mtime = os.path.getmtime(path)
+        content = _read(path)
     except OSError as err:
         raise ValueError(f"Config file {path} can't be read: {err}") from err
-    cached = _cache.get((path, mtime))
-    if cached is None:
+    cached = _cache.get(path)
+    if cached is None or cached[0] != content:
         try:
-            data = _load_toml(path)
+            data = _parse_toml(content)
         except ValueError as err:  # tomllib.TOMLDecodeError is a ValueError
             raise ValueError(f"Config file {path} is not valid TOML: {err}") from err
         settings = dict(data.get("tool", {}).get("regshield", {}) if path.endswith("pyproject.toml") else data)
@@ -235,10 +247,11 @@ def load_config(path: str | None = None) -> dict[str, Any]:
             if settings.get(key):
                 settings[key] = os.path.normpath(os.path.join(directory, os.path.expanduser(settings[key])))
         logger.debug("Loaded settings from %s: %s", path, sorted(settings))
-        _cache[(path, mtime)] = cached = settings
-    if cached.get("env_file"):
-        load_env_file(cached["env_file"])
-    return cached
+        _cache[path] = cached = (content, settings)
+    settings = cached[1]
+    if settings.get("env_file"):
+        load_env_file(settings["env_file"])
+    return settings
 
 
 def env_setting(name: str) -> Any:

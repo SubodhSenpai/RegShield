@@ -1,6 +1,6 @@
 # Agentic patterns
 
-Beyond a single agent calling tools, RegShield checks eight common agent patterns, plus a budget for what a run may cost:
+RegShield checks eight common agent patterns, plus a budget:
 
 | Pattern | Catches | Scenario fields |
 |---|---|---|
@@ -16,10 +16,10 @@ Beyond a single agent calling tools, RegShield checks eight common agent pattern
 
 ## How pattern checks work
 
-- A check runs when your scenario sets one of its fields, or when the trace contains its events, and it appears in the report only if it had something to check. Plain tool-calling traces produce no pattern results, and their scores are unchanged.
-- Each check reports `passed`, a `score` (the share of individual checks that passed), `violations` (plain-English reasons) and `details` (what it saw, such as the agent chain or the graph path).
-- Any failing pattern fails the scenario and adds a line to `report.failures`, for example `Human Approval: Step 3: 'issue_refund' ran after its approval was denied`.
-- Pattern events (plans, handoffs, approvals and so on) don't count as steps for **step efficiency**. The **faithfulness** check still reads their thoughts, and treats a denied approval as a failure: "Your refund has been processed" after a person rejected the refund is flagged.
+- A check runs when the scenario sets its fields or the trace has its events. Plain tool-calling traces get no pattern results.
+- Each result has `passed`, `score` (share of checks passed), `violations` and `details` (such as the agent chain or graph path).
+- A failing pattern fails the scenario and adds a line to `report.failures`.
+- Pattern events don't count as steps for **step efficiency**. **Faithfulness** treats a denied approval as a failure.
 
 ```python
 report = evaluate_trace(scenario, trace)
@@ -29,7 +29,7 @@ for key, result in report.patterns.items():
 
 ## Recording pattern events
 
-Patterns show up in a trace as steps whose `action.type` isn't `tool_call`, plus three optional step fields:
+Pattern events are steps whose `action.type` isn't `tool_call`, plus three optional step fields:
 
 | Event | Step `action` |
 |---|---|
@@ -43,11 +43,11 @@ Patterns show up in a trace as steps whose `action.type` isn't `tool_call`, plus
 
 | Step field | Meaning |
 |---|---|
-| `agent` | Which agent took the step. With a `TraceRecorder`, steps after a handoff belong to the new agent. |
-| `node` | The graph node the step ran in. |
-| `parallel_group` | Steps with the same value ran concurrently, even if other steps were recorded between them. |
+| `agent` | Which agent took the step (after a handoff, the new agent) |
+| `node` | The graph node the step ran in |
+| `parallel_group` | Steps with the same value ran concurrently |
 
-The [LangChain/LangGraph](integrations.md#langgraph) and [smolagents](integrations.md#smolagents) integrations record graph nodes, parallel calls, agents, handoffs and human approvals automatically. For everything else, a [`TraceRecorder`](integrations.md#any-framework-tracerecorder) has one method per event.
+[LangChain/LangGraph](integrations.md#langgraph) and [smolagents](integrations.md#smolagents) record these automatically. Otherwise, a [`TraceRecorder`](integrations.md#any-framework-tracerecorder) has one method per event.
 
 ---
 
@@ -64,7 +64,7 @@ scenario = {
 }
 ```
 
-This matters because tool selection is a *score*: an agent that calls every expected tool **plus** `delete_customer` can still score 0.86 and pass the 0.85 threshold. `forbidden_tools` fails it outright.
+Tool selection is a *score*: calling every expected tool **plus** `delete_customer` still scores 0.86 and passes. `forbidden_tools` fails it outright.
 
 Two more rules cover what a tool name can't:
 
@@ -81,8 +81,8 @@ scenario = {
 }
 ```
 
-- **`forbidden_arguments`** matters for generic tools (SQL, shell, HTTP, file paths), where the danger is in the arguments: an agent asked to keep a code freeze that runs `DELETE` through a read-only query tool, or a cleanup that deletes a drive root. Objects and lists are matched as JSON text.
-- **`prerequisites`** goes further than `expected_order`, which only checks that tools ran in order: each call to `deploy` needs `run_tests` to have run in an earlier step, and its latest result before the deploy to be a success. An agent that deploys after the tests failed, or moves files after the folder couldn't be created, fails. If the gated tool never runs, nothing is violated.
+- **`forbidden_arguments`**: for generic tools (SQL, shell, HTTP, paths), where the danger is in the arguments. Objects and lists match as JSON text.
+- **`prerequisites`**: stricter than `expected_order`. Each `deploy` needs an earlier `run_tests` whose latest result succeeded. If the gated tool never runs, nothing is violated.
 
 Violations look like:
 
@@ -96,7 +96,7 @@ Violations look like:
 
 ## Human-in-the-loop approval
 
-Risky tools must get a human's approval first, one approval per call.
+Risky tools need a human's approval first, one per call.
 
 ```python
 scenario = {
@@ -113,9 +113,10 @@ recorder.approval("issue_refund", approved=True, by="supervisor@acme.com")
 issue_refund(order_id="ORD-1204", amount=1200)   # a recorder-wrapped tool
 ```
 
-An approval without `tool` covers the next call to any guarded tool. Even without `requires_approval`, a tool named in a **denied** approval is checked for running anyway. With LangChain's `HumanInTheLoopMiddleware`, approvals are recorded automatically from your resume decisions.
-
-After a denial, the faithfulness check also makes sure the agent doesn't tell the user the action happened.
+- An approval without `tool` covers the next guarded call.
+- A tool named in a **denied** approval is checked even without `requires_approval`.
+- LangChain's `HumanInTheLoopMiddleware` decisions are recorded automatically.
+- After a denial, faithfulness checks the agent doesn't claim the action happened.
 
 Violations:
 
@@ -153,10 +154,10 @@ Plan steps are tool names, or dicts with a `"tool"` key.
 What's checked:
 
 - **A plan comes first** (with `require_plan` / `expected_plan`).
-- **The first plan contains `expected_plan`** in order (other steps may be in between).
-- **Calls stay in the current plan.** Each call after a plan must be one of that plan's steps.
-- **The final plan is completed in order.** Every step of the last plan runs, first runs in plan order.
-- **No blind continuation.** After a failed call, the next call must retry the same tool, or a new plan must come first.
+- **The first plan contains `expected_plan`** in order.
+- **Calls stay in the current plan.**
+- **The final plan is completed in order.**
+- **No blind continuation.** After a failure, retry the same tool or replan.
 
 Violations:
 
@@ -193,9 +194,11 @@ recorder.handoff("billing_agent")
 issue_refund(order_id="ORD-7731")      # tagged agent=billing_agent
 ```
 
-Agents not listed in `agent_tools` aren't restricted. `expected_agents` must appear in order within the actual chain, and other agents may take part in between. Two agents handing off to each other 4 or more times is always flagged as a loop.
-
-The agent chain lists agents in the order they **acted**. A handoff is a request: its target joins the chain when it takes a step (or when the trace ends), not if another agent acts first. So when a supervisor asks for two transfers at once and only one agent runs, only that agent appears. With langgraph-supervisor, swarms and smolagents managed agents, agents and handoffs are recorded automatically.
+- Agents not in `agent_tools` aren't restricted.
+- `expected_agents` must appear in order; other agents may act in between.
+- Two agents handing off to each other 4+ times is flagged as a loop.
+- The chain lists agents in the order they **acted**: a handoff target joins only when it takes a step (or the trace ends).
+- langgraph-supervisor, swarms and smolagents managed agents are recorded automatically.
 
 Violations:
 
@@ -220,7 +223,7 @@ Recording:
 recorder.route("billing", thought="The customer was charged twice.")
 ```
 
-The first routing decision is compared, ignoring case and surrounding spaces. Across a scenario file, the CLI also reports overall accuracy:
+The first routing decision is compared, ignoring case and edge spaces. The CLI also reports accuracy across a file:
 
 ```text
 Routing accuracy: 18/20 (90%)
@@ -253,9 +256,9 @@ with recorder.parallel():
 summarize_options(city="Lisbon")
 ```
 
-`expected_order` accepts a plain list (each tool before the next) or `[before, after]` pairs for partial orders. When a prerequisite and its dependent share a parallel group, that's an ordering violation: the dependent started before the prerequisite's result existed.
+`expected_order` takes a list or `[before, after]` pairs. A prerequisite in the same parallel group as its dependent is an ordering violation.
 
-Parallel groups are recorded automatically when a LangChain model or a smolagents `ToolCallingAgent` requests several tools at once, and for LangGraph fan-out branches.
+Parallel groups are recorded automatically for LangChain, smolagents `ToolCallingAgent` and LangGraph fan-out.
 
 Violations:
 
@@ -277,7 +280,7 @@ scenario = {
 }
 ```
 
-With LangGraph and the RegShield callback handler, nodes are recorded automatically (see [Integrations](integrations.md#langgraph)). Otherwise:
+With LangGraph, nodes are recorded automatically ([Integrations](integrations.md#langgraph)). Otherwise:
 
 ```python
 recorder.node("draft");   write_draft(topic="Agents in production")
@@ -285,9 +288,10 @@ recorder.node("review")
 recorder.node("publish"); publish_post(slug="agents-in-production")
 ```
 
-The check runs only when `allowed_transitions` or `max_node_visits` is set. A node counts as entered once per graph step, however many steps or parallel tasks run inside it. **List every node that has outgoing edges**: a node missing from `allowed_transitions` has none allowed.
-
-Nodes that run in the same step (fan-out) form one layer, shown as a list in the path: `[['prices', 'weather'], 'summary']`. A node after a layer may be reached from any node in it, so list only the graph's real edges, such as `{"weather": ["summary"], "prices": ["summary"]}`.
+- The check runs only when `allowed_transitions` or `max_node_visits` is set.
+- A node counts once per graph step, however much runs inside it.
+- **List every node with outgoing edges**: a node missing from `allowed_transitions` has none.
+- Fan-out nodes form one layer (`[['prices', 'weather'], 'summary']`), and any of them may lead on, so list only real edges.
 
 Violations:
 
@@ -316,8 +320,8 @@ recorder.critique(approved=True)
 
 What's checked, even without configuration:
 
-- **Critiques are acted on.** A draft right after a rejection must differ from the rejected one (ignoring case and whitespace).
-- **The output ends approved.** If the last event is a rejecting critique, the loop shipped rejected work.
+- **Critiques are acted on.** A draft after a rejection must change.
+- **The output ends approved.**
 - **Rounds stay under the cap** (`max_revision_rounds` counts critiques).
 
 Violations:
@@ -330,7 +334,7 @@ Violations:
 
 ## Budget
 
-Limits on what one run may spend, checked against the token usage recorded with the trace.
+Limits on what one run may spend, from its recorded token usage.
 
 ```python
 scenario = {
@@ -341,9 +345,9 @@ scenario = {
 }
 ```
 
-The LangChain/LangGraph handler and `instrument_smolagents` record each model call's usage automatically. Elsewhere, call `recorder.llm_response(response)` with the SDK response, or `recorder.llm_call(model, input_tokens, output_tokens)`. Model calls are priced from a bundled snapshot of public list prices, unless the trace carries the real cost (OpenRouter reports it) or you set your own prices (see [Cost tracking](reference.md#cost-tracking)).
+The LangChain handler and `instrument_smolagents` record usage automatically. Elsewhere, call `recorder.llm_response(response)` or `recorder.llm_call(model, input_tokens, output_tokens)`. Pricing: [Cost tracking](reference.md#cost-tracking).
 
-A budget fails rather than passes when it can't be checked: no usage was recorded, or a model has no price. Add local or fine-tuned models to your pricing, for example `{"models": {"qwen*": {"input": 0, "output": 0}}}`.
+A budget that can't be checked fails: no usage recorded, or an unpriced model. Add such models to your pricing, e.g. `{"models": {"qwen*": {"input": 0, "output": 0}}}`.
 
 Violations:
 
@@ -356,15 +360,15 @@ Violations:
 
 ## Code agents
 
-Code agents, such as smolagents' `CodeAgent`, call tools from Python code they write, so their messages don't list individual tool calls. RegShield records calls **as the tools actually run** instead. See [smolagents `CodeAgent`](integrations.md#smolagents-codeagent) or wrap tools with [`TraceRecorder.tool`](integrations.md#any-framework-tracerecorder). Every check above then works for code agents too.
+Code agents like smolagents' `CodeAgent` call tools from code they write, so RegShield records calls **as the tools run**. See [smolagents](integrations.md#smolagents) or [`TraceRecorder.tool`](integrations.md#any-framework-tracerecorder). Every check above works for them.
 
 ## Try them all
 
-The bundled samples include a passing and a failing trace for every pattern:
+The bundled samples have a passing and a failing trace per pattern:
 
 ```bash
 regshield demo            # evaluates both traces and reports how many regressions were caught
 regshield serve           # click "Run demo", then open "Baseline vs. Regression"
 ```
 
-For real agents, built with LangChain, LangGraph and smolagents and run against a local LLM, see [examples/](../examples/README.md).
+Real agents on a local LLM: [examples/](../examples/README.md).

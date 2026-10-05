@@ -1,7 +1,6 @@
 # Examples
 
-Real agents, built with real frameworks and a real LLM, tested with RegShield. Each example
-runs an agent, evaluates its trace against a scenario and prints the report.
+Real agents on real frameworks and a real LLM. Each one runs, gets evaluated, and prints its report.
 
 | File | Framework | What it checks |
 |---|---|---|
@@ -16,13 +15,11 @@ runs an agent, evaluates its trace against a scenario and prints the report.
 | [`08_custom_agent_loop.py`](08_custom_agent_loop.py) | OpenAI SDK, no framework | `TraceRecorder` in your own tool-calling loop |
 | [`09_smolagents.py`](09_smolagents.py) | smolagents `CodeAgent`, managed agents | Tool calls from generated code; a manager and a sub-agent |
 
-Only the LangChain, LangGraph and smolagents integrations record things automatically. Plans (03),
-routes (05) and drafts and critiques (07) are recorded with one `TraceRecorder` call each.
+Plans (03), routes (05) and critiques (07) take one `TraceRecorder` call each; the rest is recorded automatically.
 
 ## Run them
 
-The examples talk to any OpenAI-compatible API. By default they use a local model through
-[Ollama](https://ollama.com), so no API key is needed:
+By default they use a local model through [Ollama](https://ollama.com), so no API key is needed:
 
 ```bash
 ollama pull qwen2.5:3b
@@ -33,7 +30,7 @@ python 01_react_agent_policy.py
 python 02_human_approval.py reject      # or: approve
 ```
 
-To use a hosted model instead, set three variables (read by [`_llm.py`](_llm.py)):
+For a hosted model, set three variables (read by [`_llm.py`](_llm.py)):
 
 ```bash
 export EXAMPLES_BASE_URL=https://api.openai.com/v1
@@ -41,12 +38,11 @@ export EXAMPLES_MODEL=gpt-4.1-mini
 export EXAMPLES_API_KEY=sk-...
 ```
 
-Each run saves `reports/latest_report.json`; run `regshield serve` in the same folder to browse it.
+Run `regshield serve` in the same folder to browse the reports.
 
 ## What to expect
 
-LLM agents aren't deterministic, so a report can pass on one run and fail on the next. That is what
-RegShield is for. With `qwen2.5:3b`, our runs caught these real mistakes:
+Agents vary between runs, so a report can pass once and fail the next time. With `qwen2.5:3b`, our runs caught these real mistakes:
 
 | Example | What the agent did wrong | How RegShield reported it |
 |---|---|---|
@@ -60,4 +56,4 @@ RegShield is for. With `qwen2.5:3b`, our runs caught these real mistakes:
 | 08 | Answered without tracking the package | `missing ['track_package']` |
 | 09 | Converted $1 to GBP instead of the stock price | `convert_currency.amount was 1, expected 431.2` |
 
-A bigger model makes fewer of these mistakes. Keep the scenario the same and compare runs.
+Bigger models make fewer mistakes. Keep the scenario and compare runs.

@@ -19,23 +19,23 @@ export const DESCRIPTION =
 const QUESTIONS = [
   {
     q: 'What is RegShield?',
-    a: 'RegShield is an open-source Python library (MIT) for regression testing AI agents. It checks an agent\'s execution trace, meaning which tools ran, in what order, with which arguments, and who approved them, against rules you write once.',
+    a: 'An open-source Python library (MIT) for regression testing AI agents. It checks which tools ran, in what order, with which arguments and approvals, against rules you write once.',
   },
   {
     q: 'How is it different from LLM evals?',
-    a: 'Most evals grade the final answer. RegShield checks the actions behind it, with deterministic rules that need no LLM and no API key. An optional LLM judge covers what rules cannot see, such as a wrong amount in the answer.',
+    a: 'Most evals grade the final answer. RegShield checks the actions behind it, with deterministic rules and no API key. An optional LLM judge catches what rules cannot, like a wrong amount.',
   },
   {
     q: 'Which agent frameworks does it work with?',
-    a: 'LangChain and LangGraph through one callback handler, Hugging Face smolagents (including CodeAgent), your own loop on the OpenAI, Anthropic or Gemini SDK with no code changes, any Python agent loop through TraceRecorder, and any language through a local REST API.',
+    a: 'LangChain, LangGraph, smolagents, raw OpenAI, Anthropic and Gemini SDK loops, any Python loop through TraceRecorder, and any language over REST.',
   },
   {
     q: 'Does it send my data anywhere?',
-    a: 'No. The checks and the dashboard run on your machine, and the dashboard listens on 127.0.0.1 only. Network calls happen only for what you turn on: the LLM judge calls the endpoint you configure, exported runs go to the destinations you name, and regshield pricing refresh downloads public model prices.',
+    a: 'No. The checks and dashboard run on your machine. Network calls happen only for what you turn on: the LLM judge, exporting runs, or refreshing prices.',
   },
   {
     q: 'How do I run it in CI?',
-    a: 'Call raise_for_failures() in a pytest test, or run regshield eval scenarios.json. The command exits with code 1 when a scenario fails, so the pipeline stops.',
+    a: 'Call raise_for_failures() in a pytest test, or run regshield eval scenarios.json, which exits with 1 when a scenario fails.',
   },
 ];
 
@@ -44,7 +44,7 @@ const QUESTIONS = [
 export function faq(release) {
   const install = {
     q: 'How do I install it?',
-    a: `RegShield isn't on PyPI yet. Each GitHub release carries the built package, and pip installs it straight from GitHub: ${release.installCommand}. It needs Python 3.10 or newer. You can also download the .whl from ${release.releaseUrl} and pip install the file.`,
+    a: `It isn't on PyPI yet, so pip installs it from GitHub: ${release.installCommand}. It needs Python 3.10+. You can also download the .whl from ${release.releaseUrl}.`,
   };
   return [QUESTIONS[0], install, ...QUESTIONS.slice(1)];
 }

@@ -1,6 +1,6 @@
 # Integrations
 
-Every integration produces a trace for `evaluate_trace(scenario, trace)`. The LangChain handler and `TraceRecorder` can be passed directly.
+Every integration produces a trace for `evaluate_trace(scenario, trace)`.
 
 - [LangChain](#langchain)
 - [LangGraph](#langgraph)
@@ -10,7 +10,7 @@ Every integration produces a trace for `evaluate_trace(scenario, trace)`. The La
 - [The `@shield` decorator](#the-shield-decorator)
 - [REST API (any language)](#rest-api-any-language)
 
-Runnable versions of everything on this page, using a local LLM, are in [examples/](../examples/README.md). To block risky calls while the agent runs, and to send runs to a monitoring service, see [In production](production.md).
+Runnable versions with a local LLM: [examples/](../examples/README.md). Guarding and exporting runs: [In production](production.md).
 
 ---
 
@@ -34,15 +34,15 @@ report = evaluate_trace(scenario, handler)
 
 The handler records:
 
-- each tool call with its arguments and result, or `ERROR: ...` if the tool raised
-- the model's text before a call, as that step's thought
-- the agent's final answer (the last AI message without tool calls), for the faithfulness check
-- calls the model requested together, which LangChain runs in parallel, as one parallel group
-- each model call's token usage (`handler.llm_calls`: model, input and output tokens, cached tokens, and the reported cost with OpenRouter), for [cost tracking](reference.md#cost-tracking) and budgets
+- tool calls with arguments and results (`ERROR: ...` if a tool raised)
+- the model's text before a call, as its thought
+- the final answer
+- calls requested together, as one parallel group
+- token usage per model call (`handler.llm_calls`), for [cost tracking](reference.md#cost-tracking)
 
-Each new top-level run starts a fresh trace, so one handler can be reused.
+Each top-level run starts a fresh trace, so one handler can be reused.
 
-**Block risky calls as they happen.** Give the handler a [`Guard`](production.md#block-risky-actions) and add its middleware. A blocked call doesn't run: the agent gets an error tool message saying why, and the step is recorded as `blocked`. A used-up budget stops the agent with `ActionBlocked`:
+**Block risky calls.** Give the handler a [`Guard`](production.md#block-risky-actions) and add its middleware. A blocked call doesn't run, and the agent is told why. A used-up budget raises `ActionBlocked`:
 
 ```python
 from regression_shield import Guard, RegressionShieldCallbackHandler
@@ -58,7 +58,7 @@ agent.invoke({"messages": [...]}, config={"callbacks": [handler]})
 pip install "regression-shield[langgraph] @ https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl"
 ```
 
-Pass the same handler to a compiled graph. On top of the above, it records from LangGraph's own metadata, with no extra code:
+Pass the same handler to a compiled graph. It also records, with no extra code:
 
 | What | How it appears in the trace | Checked by |
 |---|---|---|
@@ -66,7 +66,7 @@ Pass the same handler to a compiled graph. On top of the above, it records from 
 | Fan-out (nodes in the same step) | The nodes and their tool calls share a parallel group | [Parallel calls](patterns.md#parallel-tool-calls), graph |
 | Sub-agents (`create_agent(name=...)`, supervisor, swarm) | Each step tagged with its `agent` | [Multi-agent](patterns.md#multi-agent-handoffs) |
 | `transfer_to_<agent>` / `transfer_back_to_<agent>` tools | `handoff` events | Multi-agent |
-| `HumanInTheLoopMiddleware` interrupts | An `approval` event per decision when you resume (`approve`/`edit` approved, `reject`/`respond` denied) | [Human approval](patterns.md#human-in-the-loop-approval) |
+| `HumanInTheLoopMiddleware` interrupts | An `approval` per decision (`approve`/`edit` approved, `reject`/`respond` denied) | [Human approval](patterns.md#human-in-the-loop-approval) |
 
 ```python
 report = evaluate_trace({
@@ -77,7 +77,7 @@ report = evaluate_trace({
 print(report.patterns["graph"]["details"]["path"])   # ['writer', 'reviewer', 'writer', 'reviewer', 'publish']
 ```
 
-**Human in the loop.** Use the same handler for the first run and for resuming. The resume continues the trace instead of starting a new one:
+**Human in the loop.** Use the same handler to run and to resume, so the trace continues:
 
 ```python
 config = {"configurable": {"thread_id": "refund-1"}, "callbacks": [handler]}
@@ -88,9 +88,9 @@ if result.get("__interrupt__"):
 report = evaluate_trace({"scenario_id": "refund", "requires_approval": ["issue_refund"]}, handler)
 ```
 
-**A guard in your own graph.** With a `ToolNode`, pass the handler's hook: `ToolNode(tools, wrap_tool_call=handler.wrap_tool_call)` (and `awrap_tool_call` for async graphs).
+**A guard in your own graph.** `ToolNode(tools, wrap_tool_call=handler.wrap_tool_call)` (`awrap_tool_call` for async).
 
-**Your own events.** The handler is a [`TraceRecorder`](#any-framework-tracerecorder), so a node can add plans, routes, drafts or critiques to the same trace:
+**Your own events.** The handler is a [`TraceRecorder`](#any-framework-tracerecorder), so nodes can add plans, routes or critiques:
 
 ```python
 handler = RegressionShieldCallbackHandler()
@@ -120,20 +120,20 @@ agent.run("What is Apple's stock price in euros?")
 report = evaluate_trace(scenario, recorder)
 ```
 
-This works for `CodeAgent`, whose tools are called from Python code the model writes (its memory only shows the code), and for `ToolCallingAgent`. It records:
+Works for `CodeAgent` (tools called from generated code) and `ToolCallingAgent`. It records:
 
-- each tool call as it runs, with its arguments and result or error
-- the model's output for each step, as the thought of the calls made in it
-- calls requested together in one step (smolagents runs them in threads) as one parallel group
-- the run's answer, including the one smolagents asks for after `max_steps`
-- managed agents: calling one is a handoff from its manager, and every step is tagged with the agent that made it
-- each step's token usage (`recorder.llm_calls`, with the agent's `model_id`), including planning steps, for [cost tracking](reference.md#cost-tracking)
+- tool calls as they run, with results or errors
+- each step's model output, as its thought
+- calls requested together, as one parallel group
+- the final answer
+- managed agents, as handoffs
+- token usage (`recorder.llm_calls`), for [cost tracking](reference.md#cost-tracking)
 
-Each `agent.run` starts a new trace, unless you pass `reset=False` to continue the conversation.
+Each `agent.run` starts a new trace (`reset=False` continues it).
 
-With a guard, `instrument_smolagents(agent, TraceRecorder(guard=guard))` blocks risky calls before they run. smolagents shows the reason to the model, which can try something else. A used-up budget stops the run before the next model call.
+With a guard, `instrument_smolagents(agent, TraceRecorder(guard=guard))` blocks risky calls; the model sees why and can try something else.
 
-If you couldn't instrument a `ToolCallingAgent` before it ran, rebuild the trace from its memory afterwards:
+Didn't instrument a `ToolCallingAgent` in time? Rebuild the trace from its memory:
 
 ```python
 from regression_shield import extract_smolagents_trace
@@ -144,7 +144,7 @@ report = evaluate_trace(scenario, extract_smolagents_trace(agent))
 
 ## Any framework: `TraceRecorder`
 
-For your own agent loop, or a framework without an adapter (OpenAI Agents SDK, CrewAI, AutoGen, Pydantic AI, raw API calls), use a `TraceRecorder`:
+For your own loop or any other framework (OpenAI Agents SDK, CrewAI, AutoGen, Pydantic AI):
 
 ```python
 from regression_shield import TraceRecorder, evaluate_trace
@@ -160,7 +160,7 @@ async def track(tracking: str) -> dict:
     ...
 ```
 
-Then, inside your loop, add the model's usage, reasoning and final answer:
+Inside your loop, record usage, reasoning and the final answer:
 
 ```python
 reply = client.chat.completions.create(model=MODEL, messages=messages, tools=TOOL_SCHEMAS)
@@ -177,10 +177,10 @@ else:
 
 | Method | Records |
 |---|---|
-| `@recorder.tool`, `recorder.wrap(fn, name=None, agent=None, cost_usd=None)` | A call each time the function runs (`cost_usd`: the price of each successful call, for paid APIs) |
+| `@recorder.tool`, `recorder.wrap(fn, name=None, agent=None, cost_usd=None)` | A call each time the function runs (`cost_usd`: price per call) |
 | `recorder.tool_call(name, args, observation, agent=None, cost_usd=None)` | A call you ran yourself |
-| `recorder.llm_response(response)` | A model call's token usage, from an OpenAI, Anthropic or Gemini SDK response or a LangChain message |
-| `recorder.llm_call(model, input_tokens, output_tokens, cached_input_tokens=0, cost_usd=None)` | A model call's token usage, given directly |
+| `recorder.llm_response(response)` | Token usage from an SDK response or LangChain message |
+| `recorder.llm_call(model, input_tokens, output_tokens, cached_input_tokens=0, cost_usd=None)` | Token usage, given directly |
 | `recorder.thought(text)` | Reasoning for the next step |
 | `recorder.plan(steps)` | A plan: tool names in order |
 | `recorder.handoff(to)` | Control passing to another agent; later steps belong to it |
@@ -191,17 +191,15 @@ else:
 | `recorder.draft(content)`, `recorder.critique(approved, feedback)` | Evaluator-optimizer rounds |
 | `recorder.final_answer(text)` | The agent's answer to the user |
 | `recorder.get_trace()`, `recorder.reset()` | Read or clear the trace |
-| `recorder.to_dict()` | The whole run (steps, final answer, LLM usage) as JSON-ready data, to save as a `trace` in a scenario file |
+| `recorder.to_dict()` | The whole run as JSON, to save in a scenario file |
 
-The recorder is thread-safe. When agents run concurrently, pass `agent=` to `wrap` or `tool_call` so each call is credited to the agent that made it, rather than to whichever agent was last handed control.
-
-To connect another framework, call the matching method from its hooks: `handoff` when a task moves to another agent, `approval` wherever a person approves an action, and so on.
-
-With `TraceRecorder(guard=guard)`, wrapped tools are checked before they run, and a blocked one raises `ActionBlocked` without running. Before running a tool any other way, call `recorder.check(name, args)`; before a model call, `recorder.check_llm()` stops a run whose budget is used up.
+- The recorder is thread-safe. With concurrent agents, pass `agent=` to `wrap` or `tool_call`.
+- For other frameworks, call the matching method from their hooks (`handoff`, `approval`...).
+- With `TraceRecorder(guard=guard)`, wrapped tools are checked before running. Otherwise call `recorder.check(name, args)` before a tool and `recorder.check_llm()` before a model call.
 
 ## Raw OpenAI, Anthropic and Gemini SDK loops: `instrument()`
 
-If your agent calls the OpenAI, Anthropic or Gemini SDK directly, you don't need the `llm_response`, `thought` and `final_answer` lines above. Instrument the SDKs once, and record each run with a `with` block:
+Calling the SDKs directly? Skip the `llm_response`, `thought` and `final_answer` lines. Instrument once and wrap each run:
 
 ```python
 import regression_shield as rs
@@ -213,14 +211,14 @@ with rs.TraceRecorder() as recorder:
 report = rs.evaluate_trace(scenario, recorder)
 ```
 
-Every model call in the block is recorded with its token usage. This covers OpenAI chat completions and the Responses API, Anthropic messages and Gemini `generate_content`, sync, async and streamed. The tool calls are rebuilt from the conversation itself:
+Every model call in the block is recorded with tokens (OpenAI chat and Responses, Anthropic messages, Gemini `generate_content`; sync, async and streamed). Tool calls are rebuilt from the conversation:
 
 - what the model asked for;
 - the result your code sent back in the next request;
 - the model's text before the calls, as their thought;
 - a reply without tool calls, as the final answer.
 
-Gemini's automatic function calling is recorded turn by turn. With a guard on the recorder, a reply asking for a blocked call raises `ActionBlocked` from the SDK call, before your code can run it. Details and limits are in [In production](production.md#record-sdk-calls-with-no-code-changes).
+With a guard, a blocked call raises `ActionBlocked` from the SDK call. Details: [In production](production.md#record-sdk-calls-with-no-code-changes).
 
 ## The `@shield` decorator
 
@@ -240,7 +238,7 @@ def run_agent(task: str) -> str:
 output, report = run_agent("Deploy to staging")
 ```
 
-If the function returns a trace itself (a list of steps, or a dict with `steps`), leave out `get_trace`. With LangChain, use `get_trace=handler.get_trace`. Thresholds and judge settings can be passed as keyword arguments.
+If the function returns a trace itself, leave out `get_trace`. With LangChain, use `get_trace=handler.get_trace`. Thresholds go in as keyword arguments.
 
 ## REST API (any language)
 
@@ -262,6 +260,6 @@ curl -X POST http://localhost:8000/api/evaluate-trace \
   }'
 ```
 
-The response is the report (`status`, `composite_score`, `metrics`, `patterns`, `failures`...), and the dashboard shows it. A Python process can send a report it made itself with `report.sync_to_dashboard("http://localhost:8000")`.
+The response is the report, and the dashboard shows it. From Python: `report.sync_to_dashboard("http://localhost:8000")`.
 
-The server listens on `127.0.0.1` only by default, accepts only `application/json`, and rejects requests that try to set the judge's `api_key`, `model` or `base_url`. See the [REST reference](reference.md#rest-api) for every endpoint.
+The server listens on `127.0.0.1`, accepts only JSON, and rejects requests that set the judge's key, model or URL. [All endpoints](reference.md#rest-api).

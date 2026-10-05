@@ -1,8 +1,6 @@
 # Cookbook
 
-Short recipes for the checks people ask about most. Most are a scenario, a trace that breaks it, and what RegShield prints. The [In production](#in-production) ones show the same rules guarding a running agent. The outputs are real: the test suite runs every recipe and compares.
-
-The traces here are written by hand to keep the recipes short. In a real project you record them from your agent (see [Record a LangChain, LangGraph or smolagents agent](#record-a-langchain-langgraph-or-smolagents-agent)).
+Each recipe is a scenario, a trace that breaks it, and RegShield's real output (the test suite runs them all). Traces are written by hand here; in a real project you [record them from your agent](#record-a-langchain-langgraph-or-smolagents-agent).
 
 ## Guard actions
 
@@ -61,7 +59,7 @@ Policy: Step 3: called forbidden tool 'delete_account'; 'issue_refund' was calle
 
 ### Block dangerous arguments
 
-When a tool is generic (SQL, shell, HTTP, file paths), the danger is in its arguments. `forbidden_arguments` maps a tool (or `"*"` for any tool) to argument patterns it must never get. Patterns are regular expressions, matched case-insensitively.
+For generic tools (SQL, shell, HTTP, file paths), the danger is in the arguments. `forbidden_arguments` maps a tool (or `"*"`) to regex patterns it must never get, matched case-insensitively.
 
 ```python
 from regression_shield import evaluate_trace
@@ -81,11 +79,11 @@ print(*evaluate_trace(scenario, trace).failures, sep="\n")
 Policy: Step 2: run_sql.query matches forbidden pattern /\b(insert|update|delete|drop|truncate|alter)\b/: 'DELETE FROM users WHERE id = 2'
 ```
 
-Use `"*"` as the argument name to check every argument: `{"run_shell": {"*": r"rm\s+-rf"}}`.
+To check every argument, use `"*"`: `{"run_shell": {"*": r"rm\s+-rf"}}`.
 
 ### Deploy only if the tests passed
 
-`expected_order` checks that the tests ran first, not that they passed. `prerequisites` needs each prerequisite's latest result before the call to be a success.
+`expected_order` checks that the tests ran first. `prerequisites` also checks that they passed.
 
 ```python
 from regression_shield import evaluate_trace
@@ -104,7 +102,7 @@ Policy: Step 2: 'deploy' ran after its prerequisite 'run_tests' failed (step 1)
 
 ### Ask a person before refunding
 
-List the tools that need approval in `requires_approval`. Each call needs its own approval, and a call after a denial always fails.
+List tools that need approval in `requires_approval`. Each call needs its own approval; a call after a denial always fails.
 
 ```python
 from regression_shield import TraceRecorder, evaluate_trace
@@ -126,11 +124,11 @@ print(*report.failures, sep="\n")
 Human Approval: Step 2: 'issue_refund' ran after its approval was denied
 ```
 
-With LangChain's `HumanInTheLoopMiddleware`, the callback handler records the approve and reject decisions for you.
+With LangChain's `HumanInTheLoopMiddleware`, decisions are recorded for you.
 
 ### Check the arguments
 
-Numbers compare as numbers (`"431.20"` equals `431.2`). Text ignores case, spaces at the ends, `_` and `-`.
+Numbers compare as numbers (`"431.20"` equals `431.2`). Text ignores case, edge spaces, `_` and `-`.
 
 ```python
 from regression_shield import evaluate_trace
@@ -147,7 +145,7 @@ print(*evaluate_trace(scenario, trace).failures, sep="\n")
 Argument correctness 0.50 < 0.85: convert.amount was '1', expected 431.2
 ```
 
-Objects and lists are compared item by item with the same rules, so key order and `2` versus `2.0` don't matter. Lists keep their order, and booleans only match booleans:
+Objects and lists compare item by item: key order and `2` vs `2.0` don't matter, list order does, and booleans only match booleans:
 
 ```python
 from regression_shield import evaluate_trace
@@ -169,7 +167,7 @@ Argument correctness 0.50 < 0.85: place_order.gift_wrap was 1, expected True
 
 ### Catch "done!" after a failed call
 
-A thought or final answer that claims success right after a tool error, or after a person denied the action, is flagged.
+A success claim right after a tool error or a denied approval is flagged.
 
 ```python
 from regression_shield import evaluate_trace
@@ -188,11 +186,17 @@ print(*evaluate_trace({"scenario_id": "refund_answer"}, trace).failures, sep="\n
 Reasoning faithfulness 0.00 < 0.85: Final response claims success right after an error
 ```
 
-A result counts as a failure when it starts with `ERROR`, when a JSON result reports one (an `error` field, `"success": false`, a status like `"declined"`, an HTTP error code, a non-zero `exit_code`), or when the text says so ("failed", "403 Forbidden"). `"error": null`, "0 errors" and `error_rate` don't count.
+A result counts as failed when it:
+
+- starts with `ERROR`
+- is JSON reporting an error: an `error` field, `"success": false`, a status like `"declined"`, an HTTP error code, a non-zero `exit_code`
+- says so in text: "failed", "403 Forbidden"
+
+`"error": null`, "0 errors" and `error_rate` don't count.
 
 ### Catch claims the trace contradicts
 
-A claim about a specific tool is checked against that tool's own result, even after other calls. Messages the agent sends (email, reply, notify... tools) are checked too: this agent's refund failed, and it told the customer it went through.
+A claim about a tool is checked against that tool's own result. Messages the agent sends (email, reply, notify...) are checked too. Here the refund failed, but the agent told the customer it went through:
 
 ```python
 from regression_shield import evaluate_trace
@@ -213,13 +217,11 @@ print(*evaluate_trace({"scenario_id": "refund_email"}, trace).failures, sep="\n"
 Reasoning faithfulness 0.00 < 0.85: Step 2: message sent with 'send_email' claims 'issue_refund' succeeded, but it failed (step 1); Final response claims 'issue_refund' succeeded, but it failed (step 1)
 ```
 
-A claim that an action was done by a tool that never ran ("your order has been refunded", "I called export_data") is flagged too, for the tools the trace or the scenario names. "I've emailed you" stays fine here: that call succeeded.
-
-This check reads wording, not meaning. An answer that says "refunded $500" when the tool refunded $50 needs the LLM judge (next recipe).
+Claiming a tool did something when it never ran is flagged too. The check reads wording, not meaning: "refunded $500" when the tool refunded $50 needs the LLM judge (next recipe).
 
 ### Judge answers with a local model
 
-The judge reads the whole trace and scores whether the answer is backed by the tool results. Any OpenAI-compatible server works, including Ollama on your machine. After `ollama pull qwen2.5:7b`, set it in `pyproject.toml`; a server on your own machine or network needs no API key:
+The judge scores whether the answer is backed by the tool results. Any OpenAI-compatible server works, including Ollama with no API key. After `ollama pull qwen2.5:7b`:
 
 ```toml
 [tool.regshield]
@@ -229,15 +231,18 @@ judge_model = "qwen2.5:7b"
 judge_timeout = 120
 ```
 
-Or for one run: `regshield eval scenarios.json --llm-judge --base-url http://localhost:11434/v1 --model qwen2.5:7b`. The same works for vLLM, LM Studio or llama.cpp on your servers. Step-by-step setup, every setting, CI and troubleshooting are in [Local models with Ollama](#local-models-with-ollama).
+Or for one run: `regshield eval scenarios.json --llm-judge --base-url http://localhost:11434/v1 --model qwen2.5:7b`. Full setup in [Local models with Ollama](#local-models-with-ollama).
 
-In Python, pass `use_llm_judge=True` to `evaluate_trace`. If the judge can't answer (rate limit, bad reply), the scenario fails unless you pass `judge_on_error="pass"`. A small local model can be slow: raise the 30-second limit with `judge_timeout=120` or `--judge-timeout 120`. Each verdict also records the judge's own token usage and cost (`report.judge_audit["usage"]`, `["cost_usd"]`).
+- **Python:** `evaluate_trace(..., use_llm_judge=True)`.
+- **No answer** (rate limit, bad reply) fails the scenario, unless `judge_on_error="pass"`.
+- **Slow model:** raise the 30-second limit with `judge_timeout=120`.
+- **Judge cost:** in `report.judge_audit["usage"]` and `["cost_usd"]`.
 
 ## Cost
 
 ### Cap what a run may cost
 
-Record each model call's token usage with the trace (`llm_calls`) and set a budget. The LangChain/LangGraph handler and `instrument_smolagents` record usage for you; elsewhere call `recorder.llm_response(response)` with the SDK's response.
+Record token usage (`llm_calls`) and set a budget. The LangChain handler and `instrument_smolagents` record usage for you; elsewhere call `recorder.llm_response(response)`.
 
 ```python
 from regression_shield import evaluate_trace
@@ -264,11 +269,14 @@ Failures:
   - Budget: Cost $0.1275 is over the $0.1000 budget (gpt-4o $0.1275); 5 LLM calls (max 4)
 ```
 
-Calls are priced from a bundled snapshot of public list prices (`report.cost` shows which entry matched). A cost the provider reported in the trace wins, and you can set your own prices, including for paid tools: `evaluate_trace(..., pricing={"models": {"my-finetune*": {"input": 1.0, "output": 4.0}}, "tools": {"web_search": 0.005}})`, in USD per million tokens and per call. `max_tokens` caps input plus output tokens. Run `regshield pricing refresh` to update the list prices.
+- Prices come from a bundled snapshot of public list prices. A cost the provider reported wins.
+- Your own prices, in USD per million tokens and per tool call: `pricing={"models": {"my-finetune*": {"input": 1.0, "output": 4.0}}, "tools": {"web_search": 0.005}}`.
+- `max_tokens` caps input plus output tokens.
+- `regshield pricing refresh` updates the list prices.
 
 ### Mix local models and paid APIs
 
-Each model call is priced on its own. A local model (an Ollama name like `qwen2.5:7b`, or one served by LM Studio or your own vLLM) costs nothing per token, so a run that mixes local and paid models costs only its paid calls:
+Each call is priced on its own. Local models (`qwen2.5:7b` on Ollama, LM Studio, your own vLLM) are free per token, so a mixed run costs only its paid calls:
 
 ```python
 from regression_shield import evaluate_trace
@@ -293,15 +301,15 @@ gpt-4o-mini: $0.000228 (snapshot)
 with a GPU price: $0.000738
 ```
 
-To account for your hardware, give local models a price per million tokens, as above. `max_cost_usd` can't stop a free model, so cap local runs with `max_tokens` or `max_llm_calls`.
+To count GPU cost, give local models a price, as above. `max_cost_usd` can't stop a free model; cap local runs with `max_tokens` or `max_llm_calls`.
 
 ## In production
 
-The same rules can protect a running agent. More in [In production](production.md).
+The same rules can guard a running agent. More in [In production](production.md).
 
 ### Block a dangerous call while the agent runs
 
-Give the recorder a `Guard` built from your scenario. A call that breaks a rule doesn't run: `ActionBlocked` says why, and the attempt is recorded.
+Give the recorder a `Guard` built from your scenario. A call that breaks a rule doesn't run, and `ActionBlocked` says why.
 
 ```python
 from regression_shield import ActionBlocked, Guard, TraceRecorder
@@ -327,7 +335,7 @@ Blocked by policy: run_sql.query matches forbidden pattern /\b(drop|delete|trunc
 forbidden_arguments
 ```
 
-With LangChain, the guard goes in the handler and its middleware goes in the agent. A blocked call then comes back to the model as an error tool message, and the agent carries on:
+With LangChain, put the guard in the handler and its middleware in the agent. The model gets an error message and carries on:
 
 ```python
 handler = RegressionShieldCallbackHandler(guard=guard)
@@ -337,7 +345,7 @@ agent.invoke({"messages": [{"role": "user", "content": "Clean up the users table
 
 ### Ask a manager before a large refund
 
-An `approver` is asked at the moment a `requires_approval` tool is about to run. Its answer is recorded as an approval, and a "no" blocks the call.
+An `approver` is asked when a `requires_approval` tool is about to run. A "no" blocks the call.
 
 ```python
 from regression_shield import ActionBlocked, Guard, TraceRecorder
@@ -370,11 +378,11 @@ approval by approver: no
 issue_refund(850): blocked
 ```
 
-Without an approver, the call waits for an approval you record with `recorder.approval("issue_refund", approved=True, by="alice")`.
+Without an approver, record one yourself: `recorder.approval("issue_refund", approved=True, by="alice")`.
 
 ### Try a new rule without blocking anything
 
-`warn_only=True` lets every call run. Each one that would have been blocked is logged and marked on its step, and exported runs show it. Watch it for a while, then switch blocking on.
+`warn_only=True` lets every call run, but logs and marks each one it would have blocked. Switch blocking on once you trust the rule.
 
 ```python
 from regression_shield import Guard, TraceRecorder
@@ -390,7 +398,7 @@ deleted
 {'rule': 'forbidden_tools', 'reason': "'delete_user' is a forbidden tool"}
 ```
 
-A scenario's own `warn_only` list (`["budget"]`, `["policy"]`...) does the same for just those checks.
+A scenario's `warn_only` list (`["budget"]`, `["policy"]`...) does the same per check.
 
 ### Rate-limit an action across runs
 
@@ -417,7 +425,7 @@ sent to ben@shop.co
 
 ### Stop a runaway agent at its budget
 
-`instrument()`, the LangChain middleware and `instrument_smolagents` check the budget before each model call; `check_llm()` is the same check for your own loop.
+`instrument()`, the LangChain middleware and `instrument_smolagents` check the budget before each model call. In your own loop, call `check_llm()`.
 
 ```python
 from regression_shield import ActionBlocked, Guard, TraceRecorder
@@ -437,11 +445,11 @@ the run has spent $0.0720 of its $0.0500 budget
 3 model calls
 ```
 
-A call's cost is only known once it returns, so a run can go over its budget by one model call.
+Cost is known only after a call returns, so a run can overshoot by one call.
 
 ### Record a raw SDK agent without changing it
 
-`instrument()` records OpenAI, Anthropic and Gemini SDK calls made inside a `with recorder:` block, including the tool calls the model asked for and the results your code sent back.
+`instrument()` records OpenAI, Anthropic and Gemini SDK calls inside a `with recorder:` block, tool calls included.
 
 ```python
 import regression_shield as rs
@@ -453,11 +461,11 @@ with rs.TraceRecorder(guard=guard) as recorder:
 report = rs.evaluate_trace(scenario, recorder)
 ```
 
-With a guard, a reply asking for a blocked call raises `ActionBlocked` from the SDK call, before your code can run it.
+With a guard, a reply asking for a blocked call raises `ActionBlocked` before your code runs it.
 
 ### Send runs to your monitoring service
 
-`export_traces` streams every run as events. `OpenTelemetryExporter(endpoint="http://localhost:4318")` sends them as spans, `JSONLExporter` to a file, `HTTPExporter` to any URL; here a small exporter of our own prints them.
+`export_traces` streams every run as events: to OpenTelemetry (`OpenTelemetryExporter`), a file (`JSONLExporter`) or any URL (`HTTPExporter`). This one just prints them:
 
 ```python
 from regression_shield import Exporter, TraceRecorder, export_traces, stop_exporting
@@ -481,33 +489,35 @@ tool_call issue_refund error
 run_end ok
 ```
 
-With `sample_rate=0.1`, a tenth of healthy runs is exported, plus every run where something went wrong (`keep_errors`). Prompts, arguments and results stay out unless the exporter has `capture_content=True`.
+`sample_rate=0.1` exports a tenth of healthy runs, plus every run with a problem. Prompts, arguments and results stay out unless `capture_content=True`.
 
 ### Keep model prices current
 
-Providers change prices often. RegShield ships with a dated list of public prices. Refresh it whenever you like:
+RegShield ships a dated list of public prices. Refresh it any time:
 
 ```bash
 regshield pricing refresh                          # download the latest list prices
 regshield pricing show gpt-4o claude-sonnet-4-5    # the price RegShield uses for each model
 ```
 
-The refreshed list is saved in your user cache and used from then on. `pricing refresh` also tells you which prices changed. For the same numbers on every machine and in CI, save the list in your repository with `--output prices.json` and set `REGSHIELD_PRICE_LIST=prices.json`. `pricing show` exits with 1 when a model has no price, so CI can check that every model you use is priced.
+- The refreshed list is cached and used from then on; `refresh` lists the prices that changed.
+- Same prices on every machine: `--output prices.json`, then `REGSHIELD_PRICE_LIST=prices.json`.
+- `pricing show` exits with 1 for an unpriced model, so CI can catch it.
 
 ## Local models with Ollama
 
-Run the LLM judge, and your agents, on your own GPU or servers instead of a paid API. Nothing leaves your infrastructure, and calls cost nothing per token. These recipes go from installing Ollama to running the judge in CI. [Local and self-hosted models](local-models.md) has the overview.
+Run the judge and your agents on your own GPU: nothing leaves your machines, and tokens are free. Overview: [Local and self-hosted models](local-models.md).
 
 ### Install Ollama and pull a model
 
 | System | Install |
 |---|---|
-| Windows | Run the installer from [ollama.com/download](https://ollama.com/download). Ollama runs in the background (tray icon) and starts when you log in. |
+| Windows | Run the installer from [ollama.com/download](https://ollama.com/download). It runs in the background. |
 | macOS | Install the app from [ollama.com/download](https://ollama.com/download), or `brew install ollama` and then `ollama serve`. |
-| Linux | `curl -fsSL https://ollama.com/install.sh \| sh` installs Ollama and starts it as a service. |
+| Linux | `curl -fsSL https://ollama.com/install.sh \| sh` (starts as a service) |
 | Docker | `docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama` (leave out `--gpus=all` without an NVIDIA GPU) |
 
-Then download a model and check that it answers:
+Then download a model and check it answers:
 
 ```bash
 ollama pull qwen2.5:7b                  # download the model (about 4.7 GB)
@@ -517,16 +527,16 @@ curl http://localhost:11434/v1/models   # the OpenAI-compatible API RegShield ta
 
 | GPU memory | Model | Notes |
 |---|---|---|
-| 4 GB | `qwen2.5:3b` | Fine for short traces; RegShield's own real-agent tests run on one |
-| 8 GB | `qwen2.5:7b`, `llama3.1:8b` | A good default for the judge and for tool-calling agents |
+| 4 GB | `qwen2.5:3b` | Short traces; RegShield's own tests use it |
+| 8 GB | `qwen2.5:7b`, `llama3.1:8b` | A good default for the judge and agents |
 | 16 GB or more | `qwen2.5:14b` | Long traces and harder cases |
-| No GPU | `qwen2.5:3b` | Runs on the CPU, more slowly; raise `judge_timeout` |
+| No GPU | `qwen2.5:3b` | Slower on the CPU; raise `judge_timeout` |
 
-To keep everything on your own machines, start Ollama with `OLLAMA_NO_CLOUD=1`. Without it, models with a `-cloud` tag (`gpt-oss:120b-cloud`) run on Ollama's servers.
+Set `OLLAMA_NO_CLOUD=1` to keep everything local; otherwise `-cloud` models (`gpt-oss:120b-cloud`) run on Ollama's servers.
 
 ### Point the LLM judge at Ollama
 
-Put the settings in `pyproject.toml`, so pytest and CI share them. A `regshield.toml` works too, without the `[tool.regshield]` line. A server on your machine or private network needs no API key:
+Put the settings in `pyproject.toml` so pytest and CI share them (or `regshield.toml`, without the `[tool.regshield]` line). Local servers need no API key:
 
 ```toml
 [tool.regshield]
@@ -541,7 +551,7 @@ judge_on_error = "fail"                        # "pass" to ignore a judge that c
 regshield eval scenarios.json
 ```
 
-This is real output from qwen2.5 3B on a 4 GB laptop GPU. The trace's answer says "I refunded $500" while the tool refunded $50:
+Real output from qwen2.5 3B on a 4 GB laptop GPU, for an answer claiming $500 when the tool refunded $50:
 
 ```text
 FAIL  refund_overstated  (composite 1.00)
@@ -550,7 +560,7 @@ FAIL  refund_overstated  (composite 1.00)
 LLM judge: 2 calls, 614 tokens, $0.0000
 ```
 
-Every metric scores 1.00 here; only the judge, which reads meaning, sees the mistake. It costs nothing because the model is local.
+Every metric scores 1.00; only the judge catches it, for $0.
 
 ### Every way to set the judge
 
@@ -564,7 +574,7 @@ Every metric scores 1.00 here; only the judge, which reads meaning, sees the mis
 | API key, for hosted APIs or a server that checks keys | never in the file: the environment, or the `env_file` it names | `OPENAI_API_KEY`, `OPENROUTER_API_KEY` | `--api-key` | `api_key=` |
 | Your own price for the model | `[tool.regshield.pricing.models]` | | | `pricing=` |
 
-A command-line flag or Python argument wins over an environment variable, which wins over the file. `regshield config show` prints the judge RegShield would use, and where each setting came from. To judge many traces with the same settings from Python:
+A flag or argument beats an environment variable, which beats the file. `regshield config show` prints the judge in effect. For many traces with the same settings:
 
 ```python
 from regression_shield import AgentTraceEvaluator
@@ -574,7 +584,7 @@ evaluator = AgentTraceEvaluator(use_llm_judge=True, base_url="http://localhost:1
 report = evaluator.evaluate(scenario, trace)
 ```
 
-RegShield sends no key to a server on this machine, a private network address, or an internal host name such as a Docker or Kubernetes service:
+No key is sent to local, private-network or internal hosts (Docker, Kubernetes):
 
 ```python
 from regression_shield import LLMJudge
@@ -594,7 +604,7 @@ https://openrouter.ai/api/v1   key needed: True
 
 ### Run your agent on Ollama
 
-Point your SDK or framework at Ollama, and RegShield records the agent exactly as it would with a paid API:
+Point your SDK or framework at Ollama. RegShield records it as it would a paid API:
 
 ```python
 # OpenAI SDK: it insists on a key, and Ollama ignores it
@@ -620,11 +630,11 @@ Then record the run the usual way:
 - **LangChain:** the callback handler.
 - **smolagents:** `instrument_smolagents`.
 
-Guards and export work the same. Pick a model that can call tools, such as Qwen 2.5, Llama 3.1 or later, or Mistral NeMo. Other models answer in text and never call your tools.
+Pick a model that can call tools (Qwen 2.5, Llama 3.1+, Mistral NeMo); others answer in text and never call your tools.
 
 ### Give the model a longer context window
 
-A long trace must fit in the model's context window, or the judge sees only part of it. Ollama's default depends on your GPU memory: 4k tokens on small GPUs. To raise it for one model, write a `Modelfile`:
+If a trace doesn't fit the context window, the judge sees only part of it. Ollama defaults to 4k tokens on small GPUs. To raise it for one model, write a `Modelfile`:
 
 ```text
 FROM qwen2.5:3b
@@ -635,11 +645,11 @@ PARAMETER num_ctx 16384
 ollama create qwen2.5-16k:3b -f Modelfile   # then set judge_model = "qwen2.5-16k:3b"
 ```
 
-To raise it for every model, start Ollama with `OLLAMA_CONTEXT_LENGTH=16384`. A longer context window uses more GPU memory. RegShield's own tests use exactly this `qwen2.5-16k:3b` on a 4 GB GPU.
+For every model, start Ollama with `OLLAMA_CONTEXT_LENGTH=16384`. More context uses more GPU memory.
 
 ### Keep the model loaded, or free the GPU
 
-Ollama unloads a model after 5 minutes without calls, and the next call waits a few seconds while it loads again.
+Ollama unloads a model after 5 idle minutes; the next call waits while it reloads.
 
 | You want | Do this |
 |---|---|
@@ -648,19 +658,19 @@ Ollama unloads a model after 5 minutes without calls, and the next call waits a 
 | To see what's loaded | `ollama ps` |
 | Several agents or test workers at once | `OLLAMA_NUM_PARALLEL=2` (uses more memory) |
 
-On Windows, set these as user environment variables, then quit Ollama from the tray and start it again.
+On Windows, set these as user environment variables and restart Ollama from the tray.
 
 ### Use Ollama on another machine, in Docker or in Kubernetes
 
-Ollama listens only on `127.0.0.1` by default. On a GPU server, let it accept connections from your network:
+Ollama listens on `127.0.0.1` only. On a GPU server, open it to your network:
 
 ```bash
 OLLAMA_HOST=0.0.0.0:11434 ollama serve
 ```
 
-Then set `judge_base_url = "http://gpu-server.local:11434/v1"`, or use the server's IP address. Ollama has no login, so keep it behind your firewall or VPN.
+Then set `judge_base_url = "http://gpu-server.local:11434/v1"`. Ollama has no login: keep it behind a firewall or VPN.
 
-With Docker Compose, the tests reach Ollama by its service name:
+With Docker Compose, tests reach Ollama by service name:
 
 ```yaml
 services:
@@ -682,9 +692,9 @@ volumes:
   ollama: {}
 ```
 
-Pull the model once with `docker compose exec ollama ollama pull qwen2.5:7b`. In Kubernetes, use the service name the same way: `http://ollama.ai.svc.cluster.local:11434/v1`.
+Pull the model once: `docker compose exec ollama ollama pull qwen2.5:7b`. Kubernetes works the same: `http://ollama.ai.svc.cluster.local:11434/v1`.
 
-Other servers work the same; only the address and the model name change:
+Other servers only change the address and model name:
 
 | Server | Start it | `judge_base_url` | `judge_model` |
 |---|---|---|---|
@@ -694,7 +704,7 @@ Other servers work the same; only the address and the model name change:
 
 ### Switch between a local model and a paid API
 
-Keep the local judge as your everyday setting, and pick a hosted one when you want it, in CI for example. Use one settings file for each:
+Keep a local judge for everyday runs and a hosted one for when you want it, with one settings file each:
 
 ```toml
 # regshield.toml: everyday runs, on your own GPU
@@ -717,11 +727,11 @@ export OPENROUTER_API_KEY=sk-or-...                             # the key stays 
 REGSHIELD_CONFIG=regshield.paid.toml regshield eval scenarios.json   # paid judge
 ```
 
-For a single run, flags work too: `--base-url`, `--model` and `--api-key`.
+For one run, use `--base-url`, `--model` and `--api-key`.
 
 ### Run the judge in CI with Ollama
 
-On GitHub Actions, run Ollama as a service container next to the job:
+On GitHub Actions, run Ollama as a service container:
 
 ```yaml
 # .github/workflows/agents.yml
@@ -742,7 +752,7 @@ jobs:
       - run: regshield eval scenarios.json --llm-judge --base-url http://localhost:11434/v1 --model qwen2.5:3b --judge-timeout 300
 ```
 
-Hosted runners have no GPU, so a 3B model on the CPU, with a generous timeout, is the practical choice there. A self-hosted runner with a GPU is much faster. The model downloads on every run: about 2 GB for `qwen2.5:3b`.
+Hosted runners have no GPU, so use a 3B model with a long timeout. It downloads (about 2 GB) on every run; a self-hosted GPU runner is much faster.
 
 ### Fix common problems
 
@@ -752,14 +762,14 @@ The messages below are the ones RegShield prints:
 |---|---|---|
 | `could not run: ConnectError: ... refused` | Ollama isn't running, or the address or port is wrong | Start Ollama (the app, or `ollama serve`); check `curl http://localhost:11434/v1/models` |
 | `could not run: HTTP 404 ...: model "llama3.1:8b" not found, try pulling it first` | The model isn't downloaded, or its name is spelled differently | `ollama pull llama3.1:8b`, or copy the name from `ollama list` |
-| `could not run: ReadTimeout` | The first call loads the model, and a big model or a CPU is slow | Raise `judge_timeout`; keep the model loaded with `OLLAMA_KEEP_ALIVE` |
+| `could not run: ReadTimeout` | The first call loads the model; big models and CPUs are slow | Raise `judge_timeout`; keep the model loaded with `OLLAMA_KEEP_ALIVE` |
 | `error: The LLM judge uses your own server (...): set judge_model` | No model name was given | Set `judge_model` |
-| `error: The LLM judge's server ... needs an API key` | The address doesn't look like your own server: a public name or IP | Pass `--api-key` (any text, if the server doesn't check keys) |
+| `error: The LLM judge's server ... needs an API key` | The address looks public, not like your own server | Pass `--api-key` (any text, if the server doesn't check keys) |
 | Verdicts that seem random | The model is too small, or the trace doesn't fit its context | Use a 7B model or bigger; [raise the context window](#give-the-model-a-longer-context-window) |
 | The agent never calls a tool | The model doesn't support tool calling | Use Qwen 2.5, Llama 3.1 or later, or Mistral NeMo |
-| Out of memory, or very slow | The model doesn't fit the GPU | A smaller or more quantized model (`qwen2.5:3b`, `qwen2.5:7b-instruct-q4_K_M`); close other programs using the GPU |
+| Out of memory, or very slow | The model doesn't fit the GPU | A smaller or more quantized model (`qwen2.5:3b`, `qwen2.5:7b-instruct-q4_K_M`) |
 
-How local models are priced, and how to count your GPU cost, is in [Mix local models and paid APIs](#mix-local-models-and-paid-apis).
+Pricing for local models: [Mix local models and paid APIs](#mix-local-models-and-paid-apis).
 
 ## Agent patterns
 
@@ -803,7 +813,7 @@ print(*report.failures, sep="\n")
 Multi-Agent: Step 2: agent 'triage' called 'issue_refund', which isn't in its allowed tools
 ```
 
-LangGraph supervisor and swarm graphs need no recording code: the callback handler tags each step with its agent and turns `transfer_to_<agent>` calls into handoffs.
+LangGraph supervisor and swarm graphs record agents and `transfer_to_<agent>` handoffs automatically.
 
 ### Check where a router sent the request
 
@@ -838,7 +848,7 @@ print(*evaluate_trace(scenario, recorder).failures, sep="\n")
 Parallel Calls: get_weather, get_flights should run in parallel but ran one after another
 ```
 
-Record concurrent calls inside `with recorder.parallel():`. The LangChain handler and `instrument_smolagents` group them for you.
+Record concurrent calls inside `with recorder.parallel():`. The LangChain handler and `instrument_smolagents` do it for you.
 
 ### Allow only certain graph transitions
 
@@ -861,7 +871,7 @@ print(*report.failures, sep="\n")
 Graph Transitions: Step 4: 'draft' -> 'publish' is not an allowed transition
 ```
 
-With LangGraph, each node the graph runs is recorded automatically. Nodes that ran in the same step (fan-out) count as one layer, so you only list real edges.
+LangGraph nodes are recorded automatically. Nodes in the same step (fan-out) count as one layer, so list only real edges.
 
 ### End a writer and critic loop on an approved draft
 
@@ -922,7 +932,7 @@ with TraceRecorder() as recorder:
 report = evaluate_trace(scenario, recorder)
 ```
 
-Any other framework: wrap your tools with a `TraceRecorder` (`search = recorder.wrap(search)`) and pass the recorder to `evaluate_trace`. See [Integrations](integrations.md). All of these work the same with paid APIs and with local models ([Local and self-hosted models](local-models.md)).
+Any other framework: wrap your tools (`search = recorder.wrap(search)`) and pass the recorder to `evaluate_trace`. See [Integrations](integrations.md). Paid and [local models](local-models.md) work the same.
 
 ### Fail a pytest test with the reasons
 
@@ -946,7 +956,7 @@ E     - Call ordering 0.00 < 1.00: 'deploy' (step 1) ran before its prerequisite
 
 ### Gate pull requests
 
-Save scenarios with recorded traces in a JSON file. A `regression_trace` is optional: a known-bad trace the scenario must catch.
+Save scenarios and recorded traces in a JSON file. `regression_trace` (optional) is a known-bad trace the scenario must catch.
 
 ```json
 [
@@ -987,11 +997,11 @@ PASS  deploy_gate  (composite 1.00)
 1/1 scenario(s) passed. Regressed traces caught: 1/1.
 ```
 
-`regshield eval` exits with 0 when everything passes, 1 when a scenario fails or a regression trace slips through, and 2 on bad input.
+Exit codes: 0 all passed, 1 a scenario failed or a regression trace slipped through, 2 bad input.
 
 ### Run the agent several times
 
-An agent that passes once can fail the next run. Record the same task a few times and evaluate the runs together:
+An agent that passes once can fail the next time. Evaluate several runs together:
 
 ```python
 from regression_shield import evaluate_runs
@@ -1013,11 +1023,11 @@ Failures:
   - Argument correctness in 1/4 runs
 ```
 
-By default every run must pass. Pass `min_pass_rate=0.8` to accept some failures. In a scenario file, give an item `traces` (a list of runs) instead of `trace`; `regshield eval --min-pass-rate 0.8` sets the rate.
+Every run must pass by default; `min_pass_rate=0.8` relaxes that. In a scenario file, give an item `traces` instead of `trace` and use `--min-pass-rate 0.8`.
 
 ### Roll out a new check without failing CI
 
-List checks in `warn_only` to report their failures as warnings while you tune them:
+List checks in `warn_only` to report them as warnings while you tune them:
 
 ```python
 from regression_shield import evaluate_trace
@@ -1034,17 +1044,17 @@ True
 Policy: 'issue_refund' was called 2 times (max 1)
 ```
 
-`warn_only` takes the five metric names (`reasoning_faithfulness`...), the pattern checks (`policy`, `human_approval`, `budget`...) and `llm_judge`.
+`warn_only` accepts metric names (`reasoning_faithfulness`...), pattern checks (`policy`, `budget`...) and `llm_judge`.
 
 ### Keep every setting in one file
 
-One file holds every setting for pytest, `regshield eval` and production: thresholds, the judge, prices, logs and export. Start it with:
+One file holds every setting for pytest, `regshield eval` and production. Start it with:
 
 ```bash
 regshield config init    # writes regshield.toml (every setting, commented out) and .env.example
 ```
 
-Uncomment what you need. API keys stay out of this file, which you commit. They go in a `.env` that you don't commit, loaded by `env_file`:
+Uncomment what you need, and commit it. API keys go in an uncommitted `.env`, loaded by `env_file`:
 
 ```toml
 # regshield.toml
@@ -1066,7 +1076,7 @@ OPENROUTER_API_KEY=sk-or-...
 REGSHIELD_LOG_LEVEL=info
 ```
 
-Every setting can be overridden by an environment variable, `REGSHIELD_` plus the setting's name in capitals, for one machine or one CI job. `regshield config show` prints what's in effect and where each value comes from. Key values are never printed:
+Override any setting with `REGSHIELD_<SETTING>`. `regshield config show` prints what's in effect and where it came from (never key values):
 
 ```text
 Setting (highest priority first: arguments, environment, file, defaults)
@@ -1085,11 +1095,11 @@ API keys (never stored in the config file)
 LLM judge would use: qwen2.5-16k:3b at http://localhost:11434/v1 (your own server, no key needed)
 ```
 
-In CI, where there's no `.env`, the same file works: a missing `env_file` is skipped, and keys come from the CI's secrets. In `pyproject.toml`, put the same lines under `[tool.regshield]`. Every setting is listed in [Configuration](reference.md#configuration-file).
+In CI, a missing `.env` is skipped and keys come from secrets. In `pyproject.toml`, use `[tool.regshield]`. All settings: [Configuration](reference.md#configuration-file).
 
 ### Set a stricter threshold
 
-Each of the five scores has a threshold you can change. Here the tool selection F1 of 0.89 passes the default 0.85 but not 0.94:
+Every score's threshold can change. Here a tool selection F1 of 0.89 passes the default 0.85 but not 0.94:
 
 ```python
 from regression_shield import evaluate_trace
@@ -1118,4 +1128,4 @@ evaluate_trace(scenario, trace, save_report=True)  # adds it to reports/latest_r
 regshield serve  # http://localhost:8000
 ```
 
-The dashboard shows each scenario's scores, pattern checks and steps, and puts every regression trace next to the trace that passed. It runs on your machine and needs no account. To send reports from another process, call `report.sync_to_dashboard("http://localhost:8000")`.
+It shows each scenario's scores, checks and steps, with each regression trace next to its passing one. Local, no account. From another process: `report.sync_to_dashboard("http://localhost:8000")`.

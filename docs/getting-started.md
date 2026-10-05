@@ -2,18 +2,31 @@
 
 ## Install
 
-```bash
-pip install regression-shield
-```
-
-Optional extras for the framework integrations:
+RegShield isn't on PyPI yet. Every [GitHub release](https://github.com/SubodhSenpai/RegShield/releases/latest) carries the built package, and pip installs it straight from GitHub:
 
 ```bash
-pip install "regression-shield[langchain]"    # LangChain callback handler
-pip install "regression-shield[langgraph]"    # LangGraph (includes LangChain)
-pip install "regression-shield[smolagents]"   # Hugging Face smolagents
-pip install "regression-shield[all]"          # all of the above
+pip install https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl
 ```
+
+A framework integration needs its extra, in square brackets before the `@`:
+
+```bash
+pip install "regression-shield[langchain] @ https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl"
+```
+
+| Extra | Adds |
+|---|---|
+| `langchain` | The LangChain callback handler |
+| `langgraph` | LangGraph (includes LangChain) |
+| `smolagents` | Hugging Face smolagents |
+| `otel` | Export to OpenTelemetry |
+| `all` | All of the above |
+
+Other ways to install the same release:
+
+- **From the file:** download the `.whl` from the [release page](https://github.com/SubodhSenpai/RegShield/releases/latest) and `pip install` it. pip still downloads RegShield's dependencies, such as httpx, from PyPI.
+- **From source, with git:** `pip install "git+https://github.com/SubodhSenpai/RegShield@v0.5.0"`
+- **In `requirements.txt`, or under `dependencies` in `pyproject.toml`:** `regression-shield @ https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl`
 
 RegShield needs Python 3.10 or newer. The core checks run offline and need no API key.
 
@@ -154,7 +167,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install regression-shield
+      - run: pip install https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl
       - run: regshield eval scenarios.json
 ```
 

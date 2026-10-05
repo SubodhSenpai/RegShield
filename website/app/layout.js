@@ -2,7 +2,8 @@ import { IBM_Plex_Mono, IBM_Plex_Sans } from 'next/font/google';
 import CopyButtons from './components/copy-buttons';
 import Landscape from './components/landscape';
 import NavLinks from './components/nav-links';
-import { DESCRIPTION, NAME, PYPI, REPO, SITE_URL, TITLE, VERSION } from '../lib/site';
+import { latestRelease } from '../lib/release';
+import { DESCRIPTION, NAME, RELEASES, REPO, SITE_URL, TITLE } from '../lib/site';
 import './globals.css';
 
 const sans = IBM_Plex_Sans({ subsets: ['latin'], weight: ['400', '500', '600'], variable: '--font-sans', display: 'swap' });
@@ -25,7 +26,11 @@ export const metadata = {
 
 export const viewport = { themeColor: '#11100e' };
 
-export default function RootLayout({ children }) {
+// Every page shows the latest release; GitHub is asked again at most once an hour
+export const revalidate = 3600;
+
+export default async function RootLayout({ children }) {
+  const release = await latestRelease();
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <body>
@@ -37,7 +42,7 @@ export default function RootLayout({ children }) {
             </a>
             <NavLinks />
             <div className="nav-right">
-              <span className="version">v{VERSION}</span>
+              <a href={release.releaseUrl} className="version" target="_blank" rel="noreferrer" title="Latest release">v{release.version}</a>
               <a href={REPO} target="_blank" rel="noreferrer">GitHub</a>
             </div>
           </div>
@@ -50,7 +55,7 @@ export default function RootLayout({ children }) {
               <a href="/docs">Docs</a>
               <a href="/cookbook">Cookbook</a>
               <a href={REPO} target="_blank" rel="noreferrer">GitHub</a>
-              <a href={PYPI} target="_blank" rel="noreferrer">PyPI</a>
+              <a href={RELEASES} target="_blank" rel="noreferrer">Releases</a>
             </nav>
           </div>
         </footer>

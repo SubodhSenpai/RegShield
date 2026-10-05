@@ -4,7 +4,8 @@ import { useState } from 'react';
 
 // A shell command you copy with one click. pip installs packages from the
 // terminal, so the site copies the command rather than downloading anything.
-export default function Install({ command = 'pip install regression-shield' }) {
+// A long command (the install from GitHub) wraps inside the button.
+export default function Install({ command }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -20,7 +21,7 @@ export default function Install({ command = 'pip install regression-shield' }) {
   return (
     <button type="button" className={`install${copied ? ' copied' : ''}`} onClick={copy} aria-label={`Copy command: ${command}`}>
       <span className="prompt">$</span>
-      <span>{command}</span>
+      <span className="cmd">{command}</span>
       <span className="hint" aria-live="polite">{copied ? 'copied' : 'copy'}</span>
     </button>
   );

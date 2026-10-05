@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Marked } from 'marked';
 import { escapeHtml, highlightHtml, languageOf } from './highlight';
+import { withRelease } from './release';
 import { REPO } from './site';
 
 const RAW = 'https://raw.githubusercontent.com/SubodhSenpai/RegShield/main';
@@ -117,10 +118,12 @@ function render(markdown) {
   return { html, headings };
 }
 
-export function loadDoc(slug) {
+// With the latest release (lib/release.js), the doc's install links point at it
+export function loadDoc(slug, release) {
   const doc = DOCS.find((d) => d.slug === slug);
   if (!doc) return null;
-  const markdown = fs.readFileSync(path.join(DOCS_DIR, doc.file), 'utf-8');
+  let markdown = fs.readFileSync(path.join(DOCS_DIR, doc.file), 'utf-8');
+  if (release) markdown = withRelease(markdown, release);
   return { ...doc, ...render(markdown), markdown };
 }
 

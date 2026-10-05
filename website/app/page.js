@@ -4,7 +4,8 @@ import Screenshots from './components/screenshots';
 import Terminal from './components/terminal';
 import { loadDoc } from '../lib/docs';
 import { Highlight } from '../lib/highlight';
-import { DESCRIPTION, FAQ, NAME, PYPI, REPO, SITE_URL, VERSION } from '../lib/site';
+import { latestRelease } from '../lib/release';
+import { DESCRIPTION, NAME, REPO, SITE_URL, faq } from '../lib/site';
 
 const RECIPE_COUNT = loadDoc('cookbook').headings.filter((h) => h.depth === 3).length;
 
@@ -161,7 +162,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install regression-shield
+      - run: {{install}}
       - run: regshield eval scenarios.json`,
   },
   {
@@ -188,51 +189,62 @@ const RECIPES = [
 ];
 
 // Structured data for search engines and answer engines
-const JSON_LD = [
-  {
-    '@context': 'https://schema.org',
-    '@type': 'SoftwareApplication',
-    name: NAME,
-    alternateName: 'regression-shield',
-    description: DESCRIPTION,
-    url: SITE_URL,
-    applicationCategory: 'DeveloperApplication',
-    operatingSystem: 'Windows, macOS, Linux',
-    softwareVersion: VERSION,
-    license: 'https://opensource.org/licenses/MIT',
-    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-    downloadUrl: PYPI,
-    sameAs: [REPO, PYPI],
-  },
-  {
-    '@context': 'https://schema.org',
-    '@type': 'SoftwareSourceCode',
-    name: NAME,
-    codeRepository: REPO,
-    programmingLanguage: 'Python',
-    runtimePlatform: 'Python 3.10+',
-    license: 'https://opensource.org/licenses/MIT',
-  },
-  {
-    '@context': 'https://schema.org',
-    '@type': 'FAQPage',
-    mainEntity: FAQ.map(({ q, a }) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })),
-  },
-];
+function jsonLd(release, questions) {
+  return [
+    {
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: NAME,
+      alternateName: 'regression-shield',
+      description: DESCRIPTION,
+      url: SITE_URL,
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Windows, macOS, Linux',
+      softwareVersion: release.version,
+      license: 'https://opensource.org/licenses/MIT',
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      downloadUrl: release.wheelUrl,
+      sameAs: [REPO],
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareSourceCode',
+      name: NAME,
+      codeRepository: REPO,
+      programmingLanguage: 'Python',
+      runtimePlatform: 'Python 3.10+',
+      license: 'https://opensource.org/licenses/MIT',
+    },
+    {
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: questions.map(({ q, a }) => ({ '@type': 'Question', name: q, acceptedAnswer: { '@type': 'Answer', text: a } })),
+    },
+  ];
+}
 
-export default function Home() {
+export default async function Home() {
+  // Everything that names a version or an install command uses the latest release
+  const release = await latestRelease();
+  const questions = faq(release);
+  const integrations = INTEGRATIONS.map((tab) => ({ ...tab, code: tab.code.replace('{{install}}', release.installCommand) }));
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd(release, questions)) }} />
 
       <section className="hero">
         <div className="hero-inner wrap">
           <h1>Regression tests for AI agents</h1>
           <p className="hero-sub">Check every tool call your agent makes against rules you write. Runs offline, in pytest or CI.</p>
           <div className="hero-actions">
-            <Install />
+            <Install command={release.installCommand} />
             <a href="/docs" className="arrow-link">Get started →</a>
           </div>
+          <p className="hero-release">
+            Latest release <a href={release.releaseUrl} target="_blank" rel="noreferrer">v{release.version}</a>
+            {' · '}<a href={release.wheelUrl}>download the .whl</a>
+            <span className="hero-release-note">{' · '}not on PyPI yet, so pip installs it from GitHub</span>
+          </p>
           <Terminal sessions={SESSIONS} cwd="~/support-agent" />
         </div>
       </section>
@@ -268,7 +280,7 @@ export default function Home() {
 
       <section className="section" id="integrations" aria-labelledby="integrations-title">
         <div className="wrap">
-          <CodeTabs items={INTEGRATIONS}>
+          <CodeTabs items={integrations}>
             <h2 id="integrations-title">Works with your agent</h2>
           </CodeTabs>
         </div>
@@ -292,7 +304,7 @@ export default function Home() {
         <div className="wrap faq">
           <h2 id="faq-title">Questions</h2>
           <div>
-            {FAQ.map(({ q, a }) => (
+            {questions.map(({ q, a }) => (
               <details key={q}>
                 <summary>{q}</summary>
                 <p>{a}</p>

@@ -17,7 +17,7 @@ Runnable versions of everything on this page, using a local LLM, are in [example
 ## LangChain
 
 ```bash
-pip install "regression-shield[langchain]"
+pip install "regression-shield[langchain] @ https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl"
 ```
 
 ```python
@@ -55,7 +55,7 @@ agent.invoke({"messages": [...]}, config={"callbacks": [handler]})
 ## LangGraph
 
 ```bash
-pip install "regression-shield[langgraph]"
+pip install "regression-shield[langgraph] @ https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl"
 ```
 
 Pass the same handler to a compiled graph. On top of the above, it records from LangGraph's own metadata, with no extra code:
@@ -104,7 +104,7 @@ def planner(state):
 ## smolagents
 
 ```bash
-pip install "regression-shield[smolagents]"
+pip install "regression-shield[smolagents] @ https://github.com/SubodhSenpai/RegShield/releases/download/v0.5.0/regression_shield-0.5.0-py3-none-any.whl"
 ```
 
 Instrument the agent once, before running it:

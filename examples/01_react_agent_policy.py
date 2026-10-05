@@ -1,6 +1,6 @@
 """A LangChain ReAct agent with banking tools, checked for order, arguments and policy.
 
-    pip install "regression-shield[langchain]" langchain langchain-openai
+    pip install ".[langchain]" langchain langchain-openai   # from a clone of this repository
     ollama pull qwen2.5:3b        # or point EXAMPLES_* at any OpenAI-compatible API
     python examples/01_react_agent_policy.py
 """

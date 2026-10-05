@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import DocPage from '../../components/doc-page';
 import { DOCS, docMetadata, loadDoc } from '../../../lib/docs';
+import { latestRelease } from '../../../lib/release';
 
 // /docs shows Getting started and /cookbook the cookbook; the other guides live here
 const PAGES = DOCS.filter((d) => d.href === `/docs/${d.slug}`);
@@ -20,5 +21,5 @@ export async function generateMetadata({ params }) {
 export default async function Guide({ params }) {
   const { slug } = await params;
   if (!PAGES.some((d) => d.slug === slug)) notFound();
-  return <DocPage doc={loadDoc(slug)} />;
+  return <DocPage doc={loadDoc(slug, await latestRelease())} />;
 }

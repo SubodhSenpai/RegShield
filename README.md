@@ -7,6 +7,7 @@
 Check every tool call, handoff, approval and plan your agent makes: in CI, before a prompt or model change ships, and in production, before a risky call runs. Works with paid APIs and with models you host yourself.
 
 [![Latest release](https://img.shields.io/github/v/release/SubodhSenpai/RegShield?label=release&color=18181b)](https://github.com/SubodhSenpai/RegShield/releases/latest)
+[![CI](https://github.com/SubodhSenpai/RegShield/actions/workflows/ci.yml/badge.svg)](https://github.com/SubodhSenpai/RegShield/actions/workflows/ci.yml)
 [![Download the wheel](https://img.shields.io/badge/download-.whl-2563eb)](https://github.com/SubodhSenpai/RegShield/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-16a34a)](https://github.com/SubodhSenpai/RegShield/blob/main/LICENSE)
 [![Core checks](https://img.shields.io/badge/core%20checks-offline%2C%20no%20API%20key-7c3aed)](#how-it-works)
@@ -423,6 +424,17 @@ python -m build                           # dist/*.whl and dist/*.tar.gz, the fi
 ```
 
 The `test` extra (included in `dev`) installs LangChain, LangGraph, langgraph-supervisor, smolagents and the OpenAI, Anthropic and Gemini SDKs, so the integration tests run real agents offline with scripted models.
+
+[CI](https://github.com/SubodhSenpai/RegShield/actions/workflows/ci.yml) runs the same checks on every push and pull request: the tests on Linux, Windows and macOS, ruff and mypy, and a check that the built wheel installs and runs.
+
+**Releasing.** Bump `__version__` in `regression_shield/__init__.py` and the version in the install links (a test fails until they match), then merge into `main`. Tag that commit and push the tag:
+
+```bash
+git tag -a v0.6.0 -m "RegShield 0.6.0"
+git push origin v0.6.0
+```
+
+The [Release workflow](https://github.com/SubodhSenpai/RegShield/actions/workflows/release.yml) tests the commit, builds the wheel and source archive, and publishes them as a GitHub release. The website and the release badge pick up the new release by themselves.
 
 ## License
 

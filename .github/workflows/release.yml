@@ -1,0 +1,112 @@
+name: Release
+
+# Pushing a version tag tests that commit, builds the wheel and source archive, and
+# publishes them as a GitHub release, which is where pip installs RegShield from:
+#
+#   git tag -a v0.6.0 -m "RegShield 0.6.0"
+#   git push origin v0.6.0
+#
+# The tag must match __version__ in regression_shield/__init__.py.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and check the release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the tag matches the package version
+        run: |
+          version=$(python -c "import re, pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('regression_shield/__init__.py').read_text()).group(1))")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::The tag $GITHUB_REF_NAME doesn't match __version__ $version"
+            exit 1
+          fi
+      - name: Run the tests
+        run: |
+          python -m pip install -e ".[test]"
+          python -m pytest -q
+      - name: Build the wheel and source archive
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*
+          cd dist
+          sha256sum *.whl *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Install the wheel in a clean environment and run the demo
+        run: |
+          python -m venv "$RUNNER_TEMP/clean"
+          "$RUNNER_TEMP/clean/bin/pip" install dist/*.whl
+          cd "$RUNNER_TEMP"
+          clean/bin/regshield demo --report demo-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish the GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Write the release notes
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          wheel="https://github.com/$REPO/releases/download/$TAG/regression_shield-$version-py3-none-any.whl"
+          {
+            echo "## Install"
+            echo
+            echo "RegShield isn't on PyPI yet. Install this release straight from GitHub (Python 3.10 or newer, on Windows, macOS and Linux):"
+            echo
+            echo '```bash'
+            echo "pip install $wheel"
+            echo '```'
+            echo
+            echo 'With a framework integration (`langchain`, `langgraph`, `smolagents`, `otel` or `all`):'
+            echo
+            echo '```bash'
+            echo "pip install \"regression-shield[langgraph] @ $wheel\""
+            echo '```'
+            echo
+            echo 'Or download the `.whl` below and `pip install` the file.'
+            echo
+            echo "## Files"
+            echo
+            echo "| File | SHA-256 |"
+            echo "|---|---|"
+            while read -r sum file; do echo "| \`${file#\*}\` | \`$sum\` |"; done < dist/SHA256SUMS.txt
+            echo
+            echo '`SHA256SUMS.txt` has the same checksums, for `sha256sum -c`.'
+          } > notes.md
+          cat notes.md
+      - name: Create the release with the files attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$REPO" --title "RegShield ${TAG#v}" \
+              --notes-file notes.md --generate-notes --verify-tag
+          fi

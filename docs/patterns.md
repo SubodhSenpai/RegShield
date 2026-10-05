@@ -7,7 +7,7 @@ RegShield checks eight common agent patterns, plus a budget:
 | [Policy rules](#policy-rules) | Forbidden tools, runaway call counts, dangerous argument values, acting before a prerequisite succeeded | `forbidden_tools`, `max_tool_calls`, `forbidden_arguments`, `prerequisites` |
 | [Human approval](#human-in-the-loop-approval) | Risky actions without sign-off, or after a denial | `requires_approval` |
 | [Plan-and-execute](#plan-and-execute) | No plan, unplanned calls, pushing on after a failure | `require_plan`, `expected_plan` |
-| [Multi-agent handoffs](#multi-agent-handoffs) | Agents using tools they don't own, wrong hand-off order, ping-pong loops | `agent_tools`, `expected_agents`, `max_handoffs` |
+| [Multi-agent handoffs](#multi-agent-handoffs) | Agents using tools they don't own, wrong hand-off order, handoff loops | `agent_tools`, `expected_agents`, `max_handoffs` |
 | [Routing](#routing) | Requests sent to the wrong destination | `expected_route` |
 | [Parallel calls](#parallel-tool-calls) | Independent calls run one after another, dependent calls run at the same time | `expected_parallel`, `expected_order` pairs |
 | [Graph workflows](#graph-workflows) | Illegal node transitions, runaway cycles | `allowed_transitions`, `max_node_visits` |
@@ -83,6 +83,7 @@ scenario = {
 
 - **`forbidden_arguments`**: for generic tools (SQL, shell, HTTP, paths), where the danger is in the arguments. Objects and lists match as JSON text.
 - **`prerequisites`**: stricter than `expected_order`. Each `deploy` needs an earlier `run_tests` whose latest result succeeded. If the gated tool never runs, nothing is violated.
+- **Cycles** in `prerequisites` or `expected_order` (`a` needs `b`, `b` needs `a`) are rejected when the scenario loads.
 
 Violations look like:
 
@@ -197,6 +198,7 @@ issue_refund(order_id="ORD-7731")      # tagged agent=billing_agent
 - Agents not in `agent_tools` aren't restricted.
 - `expected_agents` must appear in order; other agents may act in between.
 - Two agents handing off to each other 4+ times is flagged as a loop.
+- A loop through three or more agents (`A -> B -> C -> A`) that repeats is flagged too, found by [loop erasure](reference.md#algorithms).
 - The chain lists agents in the order they **acted**: a handoff target joins only when it takes a step (or the trace ends).
 - langgraph-supervisor, swarms and smolagents managed agents are recorded automatically.
 
@@ -206,6 +208,7 @@ Violations:
 - `Expected agents triage_agent -> billing_agent, got triage_agent -> support_agent`
 - `4 handoffs (max 2)`
 - `Agents 'billing_agent' and 'triage_agent' handed off to each other 4 times`
+- `Agents 'billing' -> 'refunds' -> 'triage' -> 'billing' handed off in a loop 2 times`
 
 ---
 

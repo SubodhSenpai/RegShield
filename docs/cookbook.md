@@ -100,6 +100,26 @@ print(*evaluate_trace(scenario, trace).failures, sep="\n")
 Policy: Step 2: 'deploy' ran after its prerequisite 'run_tests' failed (step 1)
 ```
 
+### Reject ordering rules that contradict each other
+
+A cycle in `expected_order` or `prerequisites` can never pass. A depth-first search finds it when the scenario loads:
+
+```python
+from regression_shield import evaluate_trace
+
+release = {"scenario_id": "release", "expected_order": [["build", "test"], ["test", "deploy"], ["deploy", "build"]]}
+try:
+    evaluate_trace(release, [])
+except ValueError as error:
+    print(error)
+```
+
+```text
+expected_order contradicts itself: 'build' before 'test' before 'deploy' before 'build'. No trace can satisfy it.
+```
+
+`regshield eval` exits with 2 on such a file, and `Guard` refuses it too.
+
 ### Ask a person before refunding
 
 List tools that need approval in `requires_approval`. Each call needs its own approval; a call after a denial always fails.
@@ -814,6 +834,26 @@ Multi-Agent: Step 2: agent 'triage' called 'issue_refund', which isn't in its al
 ```
 
 LangGraph supervisor and swarm graphs record agents and `transfer_to_<agent>` handoffs automatically.
+
+### Catch agents passing work round in circles
+
+A loop through three or more agents that repeats is caught, wherever the trace enters it:
+
+```python
+from regression_shield import TraceRecorder, evaluate_trace
+
+recorder = TraceRecorder(agent="triage")
+for agent in ["billing", "refunds", "triage"] * 2:
+    recorder.handoff(agent)
+
+print(*evaluate_trace({"scenario_id": "support_team"}, recorder).failures, sep="\n")
+```
+
+```text
+Multi-Agent: Agents 'billing' -> 'refunds' -> 'triage' -> 'billing' handed off in a loop 2 times
+```
+
+A loop that happens once is fine. Two agents bouncing work back and forth 4 times is caught too.
 
 ### Check where a router sent the request
 

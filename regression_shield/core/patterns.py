@@ -31,6 +31,7 @@ from typing import Any
 
 from regression_shield.core.cost import format_usd
 from regression_shield.core.faithfulness import is_error_observation
+from regression_shield.core.graphs import walk_cycles
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,8 @@ PATTERN_EVENT_TYPES = frozenset({"plan", "handoff", "approval", "route", "draft"
 
 # How many handoffs between the same two agents count as a ping-pong loop
 PING_PONG_HANDOFFS = 4
+# How many times a loop through three or more agents must repeat to count as a handoff loop
+HANDOFF_LOOP_REPEATS = 2
 
 
 def action_of(step: dict[str, Any]) -> dict[str, Any]:
@@ -413,7 +416,7 @@ def check_plan_execute(scenario: dict[str, Any], steps: list[dict[str, Any]]) ->
 
 
 def check_multi_agent(scenario: dict[str, Any], steps: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """agent_tools (per-agent allowlists), expected_agents (order), max_handoffs, ping-pong loops."""
+    """agent_tools (per-agent allowlists), expected_agents (order), max_handoffs, handoff loops."""
     agent_tools = {agent: set(tools) for agent, tools in (scenario.get("agent_tools") or {}).items()}
     expected_agents = scenario.get("expected_agents") or []
     max_handoffs = scenario.get("max_handoffs")
@@ -458,12 +461,34 @@ def check_multi_agent(scenario: dict[str, Any], steps: list[dict[str, Any]]) -> 
     if max_handoffs is not None:
         tally.check(len(handoffs) <= max_handoffs, f"{len(handoffs)} handoffs (max {max_handoffs})")
     pairs = Counter(frozenset((h["from"], h["to"])) for h in handoffs if h["from"] and h["to"] and h["from"] != h["to"])
-    loops = [sorted(pair) for pair, count in pairs.items() if count >= PING_PONG_HANDOFFS]
-    tally.check(
-        not loops,
-        "; ".join(f"Agents '{a}' and '{b}' handed off to each other {pairs[frozenset((a, b))]} times" for a, b in loops),
-    )
-    return tally.result("Multi-Agent", {"agents": chain, "handoffs": handoffs})
+    loops = [f"Agents '{a}' and '{b}' handed off to each other {pairs[frozenset((a, b))]} times"
+             for a, b in (sorted(pair) for pair, count in pairs.items() if count >= PING_PONG_HANDOFFS)]
+    cycles: Counter[tuple[str, ...]] = Counter()
+    for walk in _handoff_walks(handoffs):
+        cycles += walk_cycles(walk)
+    # Two-agent loops are the ping-pong rule above; this catches longer ones
+    loops += [f"Agents {' -> '.join(repr(agent) for agent in (*cycle, cycle[0]))} handed off in a loop {count} times"
+              for cycle, count in cycles.items() if len(cycle) > 2 and count >= HANDOFF_LOOP_REPEATS]
+    tally.check(not loops, "; ".join(loops))
+    return tally.result("Multi-Agent", {
+        "agents": chain, "handoffs": handoffs,
+        "handoff_cycles": [{"agents": list(cycle), "count": count} for cycle, count in cycles.items()],
+    })
+
+
+def _handoff_walks(handoffs: list[dict[str, Any]]) -> list[list[str]]:
+    """The paths control took through handoffs. A handoff from an agent other than the last
+    one handed to (parallel transfers, or an agent acting without a handoff) starts a new
+    path, so agents interleaving their steps never look like a loop."""
+    walks: list[list[str]] = []
+    for handoff in handoffs:
+        source, target = handoff["from"], handoff["to"]
+        if not source or not target or source == target:
+            continue
+        if not walks or walks[-1][-1] != source:
+            walks.append([source])
+        walks[-1].append(target)
+    return walks
 
 
 def check_routing(scenario: dict[str, Any], steps: list[dict[str, Any]]) -> dict[str, Any] | None:

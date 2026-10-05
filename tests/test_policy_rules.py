@@ -1,8 +1,10 @@
 """forbidden_arguments and prerequisites (Policy), warn_only, repeated runs, and scenario validation."""
 
+import re
+
 import pytest
 
-from regression_shield import EvaluationFailed, ScenarioSpec, evaluate_runs, evaluate_trace
+from regression_shield import EvaluationFailed, Guard, ScenarioSpec, evaluate_runs, evaluate_trace
 from regression_shield.core.metrics import ArgumentCorrectnessMetric
 
 
@@ -148,6 +150,33 @@ def test_a_lower_pass_rate_can_be_allowed():
 def test_bad_rules_are_rejected_when_the_scenario_is_built(fields, message):
     with pytest.raises(ValueError, match=message):
         ScenarioSpec.from_dict({"scenario_id": "s", **fields})
+
+
+@pytest.mark.parametrize("fields, message", [
+    ({"expected_order": [["a", "b"], ["b", "a"]]},
+     "expected_order contradicts itself: 'a' before 'b' before 'a'. No trace can satisfy it."),
+    ({"expected_order": [["a", "b"], ["b", "c"], ["c", "a"]]}, "'a' before 'b' before 'c' before 'a'"),
+    ({"expected_order": ["search", "book", "search"]},
+     "'search' before 'book' before 'search' ('search' is listed more than once)"),
+    ({"prerequisites": {"deploy": ["run_tests"], "run_tests": ["deploy"]}},
+     "prerequisites contradict each other: 'run_tests' before 'deploy' before 'run_tests'"),
+    ({"prerequisites": {"deploy": "deploy"}}, "'deploy' can't be its own prerequisite"),
+])
+def test_rules_that_contradict_each_other_are_rejected(fields, message):
+    with pytest.raises(ValueError, match=re.escape(message)):
+        ScenarioSpec.from_dict({"scenario_id": "s", **fields})
+    with pytest.raises(ValueError, match=re.escape(message)):  # the production guard reads the same rules
+        Guard(fields)
+
+
+@pytest.mark.parametrize("fields", [
+    {"expected_order": ["a", "a", "b"]},           # a repeat with nothing between orders nothing new
+    {"expected_order": [["a", "a"], ["a", "b"]]},  # a tool paired with itself orders nothing
+    {"expected_order": [["a", "c"], ["b", "c"], ["a", "b"]]},
+    {"prerequisites": {"deploy": ["run_tests", "build"], "run_tests": ["build"]}},
+])
+def test_consistent_ordering_rules_are_accepted(fields):
+    ScenarioSpec.from_dict({"scenario_id": "s", **fields})
 
 
 def test_a_limit_of_zero_is_enforced():

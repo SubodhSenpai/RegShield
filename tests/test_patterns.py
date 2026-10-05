@@ -113,6 +113,41 @@ def test_multi_agent_violations():
     assert "Agents 'billing' and 'triage' handed off to each other 4 times" in violations
 
 
+def handoffs(*agents):
+    return [event({"type": "handoff", "to": agent}) for agent in agents]
+
+
+def test_a_loop_through_three_agents_that_repeats_is_caught():
+    steps = [tool("lookup", agent="triage"), *handoffs("billing", "refunds", "triage", "billing", "refunds", "triage")]
+    result = check({}, steps, "multi_agent")
+    assert result["violations"] == ["Agents 'billing' -> 'refunds' -> 'triage' -> 'billing' handed off in a loop 2 times"]
+    assert result["details"]["handoff_cycles"] == [{"agents": ["billing", "refunds", "triage"], "count": 2}]
+    assert result["score"] == 0.0  # still one check: the loop rules share it
+
+
+def test_a_loop_that_happens_once_is_fine():
+    steps = [tool("lookup", agent="triage"), *handoffs("billing", "refunds", "triage")]
+    result = check({}, steps, "multi_agent")
+    assert result["passed"], result["violations"]
+    assert result["details"]["handoff_cycles"] == [{"agents": ["billing", "refunds", "triage"], "count": 1}]
+
+
+def test_agents_acting_without_a_handoff_never_close_a_loop():
+    # c acts on its own between handoffs, so control never went a -> b -> c -> a by handoff
+    steps = []
+    for _ in range(3):
+        steps += [tool("x", agent="a"), event({"type": "handoff", "to": "b"}, agent="a"),
+                  tool("y", agent="c"), event({"type": "handoff", "to": "a"}, agent="c")]
+    result = check({}, steps, "multi_agent")
+    assert result["passed"], result["violations"]
+    assert result["details"]["handoff_cycles"] == []
+
+
+def test_a_supervisor_delegating_to_different_agents_is_not_a_loop():
+    steps = [tool("plan", agent="supervisor"), *handoffs("research", "supervisor", "writer", "supervisor", "editor")]
+    assert check({}, steps, "multi_agent")["passed"]
+
+
 # -- routing -------------------------------------------------------------------------
 
 @pytest.mark.parametrize("expected, route, passed", [

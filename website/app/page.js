@@ -65,6 +65,20 @@ const LEDGER = [
   ['agents', "Step 2: agent 'triage' called 'issue_refund', which isn't in its allowed tools", 'keep-each-agent-to-its-own-tools', 'agent_tools'],
   ['graph', "Step 4: 'draft' -> 'publish' is not an allowed transition", 'allow-only-certain-graph-transitions', 'allowed_transitions'],
   ['loops', '3 steps for an optimal 1, 2 repeated call(s)', 'stop-an-agent-that-loops', 'optimal_step_count'],
+  ['handoffs', "Agents 'billing' -> 'refunds' -> 'triage' -> 'billing' handed off in a loop 2 times", 'catch-agents-passing-work-round-in-circles', 'always on'],
+];
+
+// The algorithm behind each check (docs/reference.md#algorithms)
+const ALGORITHMS = [
+  ['tools', 'F1 score over the expected and invoked tools', 'expected_tools'],
+  ['order', 'Partial-order check over a dependency graph', 'expected_order'],
+  ['rules', 'Cycle detection by depth-first search, when a scenario loads', 'prerequisites'],
+  ['handoffs', 'Loop erasure finds repeated cycles of agents, any length', 'always on'],
+  ['parallel', 'Steps grouped into concurrent batches', 'expected_parallel'],
+  ['graphs', 'Edge checks on the node path, visit counting', 'allowed_transitions'],
+  ['repeats', 'Hashing canonical call signatures', 'optimal_step_count'],
+  ['claims', 'Clause-level rule matching against tool results', 'always on'],
+  ['meaning', 'LLM-as-judge, optional, local or paid', 'llm_judge'],
 ];
 
 const INTEGRATIONS = [
@@ -260,6 +274,26 @@ export default async function Home() {
                 <a href={`/cookbook#${recipe}`}>
                   <span className="check">{check}</span>
                   <span className="msg"><Highlight code={message} lang="output" /></span>
+                  <span className="field">{field}</span>
+                </a>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      <section className="section" id="algorithms" aria-labelledby="algorithms-title">
+        <div className="wrap">
+          <header className="section-head row">
+            <h2 id="algorithms-title">Classical algorithms, plus an LLM judge</h2>
+            <a href="/docs/reference#algorithms" className="arrow-link">How each check works →</a>
+          </header>
+          <ol className="ledger">
+            {ALGORITHMS.map(([check, algorithm, field]) => (
+              <li key={check}>
+                <a href="/docs/reference#algorithms">
+                  <span className="check">{check}</span>
+                  <span className="msg">{algorithm}</span>
                   <span className="field">{field}</span>
                 </a>
               </li>

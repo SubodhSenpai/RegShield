@@ -184,7 +184,7 @@ def test_run_demo(dashboard, tmp_path):
 
 def test_status_reports_version_and_judge(dashboard):
     status = json.loads(request(dashboard, "GET", "/api/status")[2])
-    assert status["version"] == "0.4.0"
+    assert status["version"] == "0.5.0"
     assert status["llm_judge"]["enabled"] is False
 
 

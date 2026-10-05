@@ -1,10 +1,10 @@
 # Agentic patterns
 
-Beyond a single agent calling tools, RegShield checks eight common agent patterns:
+Beyond a single agent calling tools, RegShield checks eight common agent patterns, plus a budget for what a run may cost:
 
 | Pattern | Catches | Scenario fields |
 |---|---|---|
-| [Policy rules](#policy-rules) | Forbidden tools, runaway call counts | `forbidden_tools`, `max_tool_calls` |
+| [Policy rules](#policy-rules) | Forbidden tools, runaway call counts, dangerous argument values, acting before a prerequisite succeeded | `forbidden_tools`, `max_tool_calls`, `forbidden_arguments`, `prerequisites` |
 | [Human approval](#human-in-the-loop-approval) | Risky actions without sign-off, or after a denial | `requires_approval` |
 | [Plan-and-execute](#plan-and-execute) | No plan, unplanned calls, pushing on after a failure | `require_plan`, `expected_plan` |
 | [Multi-agent handoffs](#multi-agent-handoffs) | Agents using tools they don't own, wrong hand-off order, ping-pong loops | `agent_tools`, `expected_agents`, `max_handoffs` |
@@ -12,6 +12,7 @@ Beyond a single agent calling tools, RegShield checks eight common agent pattern
 | [Parallel calls](#parallel-tool-calls) | Independent calls run one after another, dependent calls run at the same time | `expected_parallel`, `expected_order` pairs |
 | [Graph workflows](#graph-workflows) | Illegal node transitions, runaway cycles | `allowed_transitions`, `max_node_visits` |
 | [Evaluator-optimizer](#evaluator-optimizer-reflection-loops) | Ignored critiques, rejected final output, too many rounds | `max_revision_rounds` |
+| [Budget](#budget) | Runs that cost too much, use too many tokens or make too many model calls | `max_cost_usd`, `max_tokens`, `max_llm_calls` |
 
 ## How pattern checks work
 
@@ -65,10 +66,31 @@ scenario = {
 
 This matters because tool selection is a *score*: an agent that calls every expected tool **plus** `delete_customer` can still score 0.86 and pass the 0.85 threshold. `forbidden_tools` fails it outright.
 
+Two more rules cover what a tool name can't:
+
+```python
+scenario = {
+    "scenario_id": "code_freeze",
+    # Argument values a tool must never get: regular expressions, matched case-insensitively
+    "forbidden_arguments": {
+        "run_sql": {"query": r"\b(insert|update|delete|drop|truncate|alter)\b"},
+        "*": {"path": [r"^~", r"^[a-z]:[\\/]?$", r"^/$"]},   # "*": any tool (or any argument)
+    },
+    # Tools that must have succeeded before another tool may run
+    "prerequisites": {"deploy": ["run_tests"], "move_file": ["create_folder"]},
+}
+```
+
+- **`forbidden_arguments`** matters for generic tools (SQL, shell, HTTP, file paths), where the danger is in the arguments: an agent asked to keep a code freeze that runs `DELETE` through a read-only query tool, or a cleanup that deletes a drive root. Objects and lists are matched as JSON text.
+- **`prerequisites`** goes further than `expected_order`, which only checks that tools ran in order: each call to `deploy` needs `run_tests` to have run in an earlier step, and its latest result before the deploy to be a success. An agent that deploys after the tests failed, or moves files after the folder couldn't be created, fails. If the gated tool never runs, nothing is violated.
+
 Violations look like:
 
 - `Step 3: called forbidden tool 'delete_customer'`
 - `'execute_transfer' was called 2 times (max 1)`
+- `Step 2: run_sql.query matches forbidden pattern /\b(insert|update|delete|drop|truncate|alter)\b/: 'DELETE FROM users WHERE id = 2'`
+- `Step 2: 'deploy' ran after its prerequisite 'run_tests' failed (step 1)`
+- `Step 1: 'deploy' ran before its prerequisite 'run_tests' succeeded`
 
 ---
 
@@ -303,6 +325,32 @@ Violations:
 - `Step 3: revision is unchanged after the critique at step 2`
 - `Step 4: the final draft was rejected by the evaluator`
 - `4 review rounds (max 3)`
+
+---
+
+## Budget
+
+Limits on what one run may spend, checked against the token usage recorded with the trace.
+
+```python
+scenario = {
+    "scenario_id": "monthly_report",
+    "max_cost_usd": 0.10,     # LLM calls plus paid tool calls
+    "max_tokens": 50_000,     # input + output tokens of every model call
+    "max_llm_calls": 8,       # a cap on model calls catches runaway loops early
+}
+```
+
+The LangChain/LangGraph handler and `instrument_smolagents` record each model call's usage automatically. Elsewhere, call `recorder.llm_response(response)` with the SDK response, or `recorder.llm_call(model, input_tokens, output_tokens)`. Model calls are priced from a bundled snapshot of public list prices, unless the trace carries the real cost (OpenRouter reports it) or you set your own prices (see [Cost tracking](reference.md#cost-tracking)).
+
+A budget fails rather than passes when it can't be checked: no usage was recorded, or a model has no price. Add local or fine-tuned models to your pricing, for example `{"models": {"qwen*": {"input": 0, "output": 0}}}`.
+
+Violations:
+
+- `Cost $0.1275 is over the $0.1000 budget (gpt-4o $0.1275)`
+- `55,800 tokens (max 40,000)`
+- `6 LLM calls (max 5)`
+- `Cost unknown: no price for 'my-model'; add it to your pricing`
 
 ---
 

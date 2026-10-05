@@ -53,6 +53,37 @@ def _describe_step(step: dict[str, Any], position: int) -> str:
     return "\n".join(lines)
 
 
+def _env_timeout() -> float | None:
+    """JUDGE_TIMEOUT in seconds, if set."""
+    value = os.getenv("JUDGE_TIMEOUT")
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError as err:
+        raise ValueError(f"JUDGE_TIMEOUT must be a number of seconds, got {value!r}") from err
+
+
+def _usage(body: Any, model: str, pricing: dict[str, Any] | None) -> dict[str, Any]:
+    """Tokens and cost of one judge call, from the response's ``usage`` (when the API sends it)."""
+    usage = body.get("usage") if isinstance(body, dict) else None
+    if not isinstance(usage, dict):
+        return {}
+    tokens = {"input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+              "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)}
+    result: dict[str, Any] = {"usage": tokens}
+    reported = usage.get("cost")
+    if isinstance(reported, (int, float)) and not isinstance(reported, bool):
+        result["cost_usd"] = round(float(reported), 6)  # OpenRouter reports what the call cost
+    else:
+        from regression_shield.core.cost import price_for
+
+        price = price_for(model, pricing)
+        if price is not None:
+            result["cost_usd"] = round(price.cost(tokens["input_tokens"], tokens["output_tokens"]), 6)
+    return result
+
+
 class LLMJudge:
     """Asks an LLM to score a trace from 0 to 1; a score of ``PASS_SCORE`` or more passes.
 
@@ -73,20 +104,29 @@ class LLMJudge:
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
-        timeout: float = 30.0,
+        timeout: float | None = None,
+        pricing: dict[str, Any] | None = None,
     ):
+        # Arguments win, then environment variables, then the project config file, then defaults
+        from regression_shield.config import load_config
+
+        config = load_config()
         if not api_key and not os.getenv("OPENROUTER_API_KEY") and os.getenv("OPENAI_API_KEY"):
             # An OpenAI key goes to OpenAI, not to the OpenRouter default
             self.api_key = os.getenv("OPENAI_API_KEY")
-            default_base_url = os.getenv("OPENAI_BASE_URL") or self.OPENAI_BASE_URL
+            default_base_url = os.getenv("OPENAI_BASE_URL") or config.get("judge_base_url") or self.OPENAI_BASE_URL
             default_model = self.OPENAI_MODEL
         else:
             self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-            default_base_url = os.getenv("OPENROUTER_BASE_URL") or os.getenv("OPENAI_BASE_URL") or self.DEFAULT_BASE_URL
+            default_base_url = (os.getenv("OPENROUTER_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+                                or config.get("judge_base_url") or self.DEFAULT_BASE_URL)
             default_model = self.DEFAULT_MODEL
-        self.model = model or os.getenv("JUDGE_MODEL") or default_model
+        self.model = model or os.getenv("JUDGE_MODEL") or config.get("judge_model") or default_model
         self.base_url = (base_url or default_base_url).rstrip("/")
-        self.timeout = timeout
+        self.timeout = float(timeout if timeout is not None else _env_timeout() or config.get("judge_timeout") or 30.0)
+        if self.timeout <= 0:
+            raise ValueError(f"judge timeout must be > 0 seconds, got {self.timeout}")
+        self.pricing = pricing
 
     @staticmethod
     def _parse_reply(text: str) -> dict[str, Any]:
@@ -146,7 +186,8 @@ class LLMJudge:
             if response.status_code != 200:
                 logger.warning("LLM judge HTTP %d: %s", response.status_code, response.text[:120])
                 return self._error_result(f"HTTP {response.status_code} from {endpoint}")
-            verdict = self._parse_reply(response.json()["choices"][0]["message"]["content"])
+            body = response.json()
+            verdict = self._parse_reply(body["choices"][0]["message"]["content"])
             score = max(0.0, min(1.0, float(verdict["score"])))
         except Exception as err:  # any failure means no verdict, which the evaluator handles
             logger.warning("LLM judge failed: %s", err)
@@ -158,4 +199,5 @@ class LLMJudge:
             "passed": score >= self.PASS_SCORE,
             "reasoning": str(verdict.get("reasoning", "")).strip(),
             "model": self.model,
+            **_usage(body, self.model, self.pricing),
         }

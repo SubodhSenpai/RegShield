@@ -27,7 +27,7 @@ from typing import Any
 from uuid import UUID
 
 from regression_shield.core.patterns import event_type, is_tool_call
-from regression_shield.recorder import TraceRecorder
+from regression_shield.recorder import TraceRecorder, usage_from_response
 
 try:
     # LangChain's callback manager requires this base class (it reads
@@ -88,6 +88,7 @@ class RegressionShieldCallbackHandler(BaseCallbackHandler, TraceRecorder):
         TraceRecorder.reset(self)
         self._thoughts: dict[str, str] = {}               # scope -> latest model text
         self._llm_scopes: dict[UUID, str] = {}             # model run -> scope
+        self._llm_models: dict[UUID, str] = {}             # model run -> model name it was called with
         self._tool_runs: dict[UUID, dict[str, Any]] = {}   # tool calls in progress
         self._node_visits: set[Any] = set()
         self._interrupts: set[Any] = set()
@@ -174,23 +175,51 @@ class RegressionShieldCallbackHandler(BaseCallbackHandler, TraceRecorder):
             self.approval(tool, approved=kind in _APPROVING_DECISIONS, by="human")
         self._pending_approvals = []
 
+    def _start_model(self, run_id: UUID, metadata: dict[str, Any] | None, kwargs: dict[str, Any]) -> None:
+        self._llm_scopes[run_id] = _scope(metadata or {})
+        params = kwargs.get("invocation_params") or {}
+        model = (params.get("model") or params.get("model_name") or params.get("model_id")
+                 or (metadata or {}).get("ls_model_name"))
+        if model:
+            self._llm_models[run_id] = str(model)
+
     def on_chat_model_start(self, serialized: dict[str, Any] | None, messages: Any, *, run_id: UUID,
                             metadata: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        self._llm_scopes[run_id] = _scope(metadata or {})
+        self._start_model(run_id, metadata, kwargs)
 
     def on_llm_start(self, serialized: dict[str, Any] | None, prompts: Any, *, run_id: UUID,
                      metadata: dict[str, Any] | None = None, **kwargs: Any) -> None:
-        self._llm_scopes[run_id] = _scope(metadata or {})
+        self._start_model(run_id, metadata, kwargs)
 
     def on_llm_end(self, response: Any, *, run_id: UUID, **kwargs: Any) -> None:
-        """Keep the model's text; it becomes the thought of the tool calls that follow."""
+        """Keep the model's text (it becomes the thought of the tool calls that follow)
+        and the call's token usage (for cost tracking)."""
         scope = self._llm_scopes.pop(run_id, "")
+        model_hint = self._llm_models.pop(run_id, None)
         try:
-            text = (getattr(response.generations[0][0], "text", "") or "").strip()
-        except (AttributeError, IndexError):
+            generation = response.generations[0][0]
+        except (AttributeError, IndexError, TypeError):
             return
+        text = (getattr(generation, "text", "") or "").strip()
         if text:
             self._thoughts[scope] = text
+        self._record_usage(response, generation, scope, model_hint)
+
+    def _record_usage(self, response: Any, generation: Any, scope: str, model_hint: str | None) -> None:
+        message = getattr(generation, "message", None)
+        usage = usage_from_response(message) if message is not None else None
+        llm_output = getattr(response, "llm_output", None) or {}
+        if usage is None and isinstance(llm_output.get("token_usage"), dict):  # completion-style LLMs
+            usage = usage_from_response({"usage": llm_output["token_usage"]})
+        if usage is None:
+            return
+        metadata = getattr(message, "response_metadata", None) or {}
+        reported = (metadata.get("token_usage") or {}).get("cost") if isinstance(metadata, dict) else None
+        if isinstance(reported, (int, float)) and not isinstance(reported, bool) and "cost_usd" not in usage:
+            usage["cost_usd"] = float(reported)  # OpenRouter reports what the call cost
+        model = (usage.pop("model", None) or (metadata.get("model_name") if isinstance(metadata, dict) else None)
+                 or llm_output.get("model_name") or model_hint or "unknown")
+        self.llm_call(model, agent=scope or None, **usage)
 
     def on_tool_start(self, serialized: dict[str, Any] | None, input_str: str, *, run_id: UUID,
                       metadata: dict[str, Any] | None = None, inputs: dict[str, Any] | None = None,

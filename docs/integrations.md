@@ -37,6 +37,7 @@ The handler records:
 - the model's text before a call, as that step's thought
 - the agent's final answer (the last AI message without tool calls), for the faithfulness check
 - calls the model requested together, which LangChain runs in parallel, as one parallel group
+- each model call's token usage (`handler.llm_calls`: model, input and output tokens, cached tokens, and the reported cost with OpenRouter), for [cost tracking](reference.md#cost-tracking) and budgets
 
 Each new top-level run starts a fresh trace, so one handler can be reused.
 
@@ -113,6 +114,7 @@ This works for `CodeAgent`, whose tools are called from Python code the model wr
 - calls requested together in one step (smolagents runs them in threads) as one parallel group
 - the run's answer, including the one smolagents asks for after `max_steps`
 - managed agents: calling one is a handoff from its manager, and every step is tagged with the agent that made it
+- each step's token usage (`recorder.llm_calls`, with the agent's `model_id`), including planning steps, for [cost tracking](reference.md#cost-tracking)
 
 Each `agent.run` starts a new trace, unless you pass `reset=False` to continue the conversation.
 
@@ -143,10 +145,11 @@ async def track(tracking: str) -> dict:
     ...
 ```
 
-Then, inside your loop, add the model's reasoning and final answer:
+Then, inside your loop, add the model's usage, reasoning and final answer:
 
 ```python
 reply = client.chat.completions.create(model=MODEL, messages=messages, tools=TOOL_SCHEMAS)
+recorder.llm_response(reply)                 # tokens and model, for cost tracking
 message = reply.choices[0].message
 if message.tool_calls:
     if message.content:
@@ -159,8 +162,10 @@ else:
 
 | Method | Records |
 |---|---|
-| `@recorder.tool`, `recorder.wrap(fn, name=None, agent=None)` | A call each time the function runs |
-| `recorder.tool_call(name, args, observation, agent=None)` | A call you ran yourself |
+| `@recorder.tool`, `recorder.wrap(fn, name=None, agent=None, cost_usd=None)` | A call each time the function runs (`cost_usd`: the price of each successful call, for paid APIs) |
+| `recorder.tool_call(name, args, observation, agent=None, cost_usd=None)` | A call you ran yourself |
+| `recorder.llm_response(response)` | A model call's token usage, from an OpenAI, Anthropic or Gemini SDK response or a LangChain message |
+| `recorder.llm_call(model, input_tokens, output_tokens, cached_input_tokens=0, cost_usd=None)` | A model call's token usage, given directly |
 | `recorder.thought(text)` | Reasoning for the next step |
 | `recorder.plan(steps)` | A plan: tool names in order |
 | `recorder.handoff(to)` | Control passing to another agent; later steps belong to it |
@@ -171,6 +176,7 @@ else:
 | `recorder.draft(content)`, `recorder.critique(approved, feedback)` | Evaluator-optimizer rounds |
 | `recorder.final_answer(text)` | The agent's answer to the user |
 | `recorder.get_trace()`, `recorder.reset()` | Read or clear the trace |
+| `recorder.to_dict()` | The whole run (steps, final answer, LLM usage) as JSON-ready data, to save as a `trace` in a scenario file |
 
 The recorder is thread-safe. When agents run concurrently, pass `agent=` to `wrap` or `tool_call` so each call is credited to the agent that made it, rather than to whichever agent was last handed control.
 

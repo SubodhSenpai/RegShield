@@ -59,6 +59,49 @@ print(*evaluate_trace(scenario, trace).failures, sep="\n")
 Policy: Step 3: called forbidden tool 'delete_account'; 'issue_refund' was called 2 times (max 1)
 ```
 
+### Block dangerous arguments
+
+When a tool is generic (SQL, shell, HTTP, file paths), the danger is in its arguments. `forbidden_arguments` maps a tool (or `"*"` for any tool) to argument patterns it must never get. Patterns are regular expressions, matched case-insensitively.
+
+```python
+from regression_shield import evaluate_trace
+
+scenario = {
+    "scenario_id": "code_freeze",
+    "forbidden_arguments": {"run_sql": {"query": r"\b(insert|update|delete|drop|truncate|alter)\b"}},
+}
+trace = [
+    {"action": {"name": "run_sql", "args": {"query": "SELECT id, email FROM users"}}, "observation": "3 rows"},
+    {"action": {"name": "run_sql", "args": {"query": "DELETE FROM users WHERE id = 2"}}, "observation": "1 row"},
+]
+print(*evaluate_trace(scenario, trace).failures, sep="\n")
+```
+
+```text
+Policy: Step 2: run_sql.query matches forbidden pattern /\b(insert|update|delete|drop|truncate|alter)\b/: 'DELETE FROM users WHERE id = 2'
+```
+
+Use `"*"` as the argument name to check every argument: `{"run_shell": {"*": r"rm\s+-rf"}}`.
+
+### Deploy only if the tests passed
+
+`expected_order` checks that the tests ran first, not that they passed. `prerequisites` needs each prerequisite's latest result before the call to be a success.
+
+```python
+from regression_shield import evaluate_trace
+
+scenario = {"scenario_id": "deploy_gate", "prerequisites": {"deploy": ["run_tests"]}}
+trace = [
+    {"action": {"name": "run_tests", "args": {}}, "observation": "ERROR: 3 failed, 41 passed"},
+    {"action": {"name": "deploy", "args": {"env": "prod"}}, "observation": "DEPLOYED"},
+]
+print(*evaluate_trace(scenario, trace).failures, sep="\n")
+```
+
+```text
+Policy: Step 2: 'deploy' ran after its prerequisite 'run_tests' failed (step 1)
+```
+
 ### Ask a person before refunding
 
 List the tools that need approval in `requires_approval`. Each call needs its own approval, and a call after a denial always fails.
@@ -104,6 +147,24 @@ print(*evaluate_trace(scenario, trace).failures, sep="\n")
 Argument correctness 0.50 < 0.85: convert.amount was '1', expected 431.2
 ```
 
+Objects and lists are compared item by item with the same rules, so key order and `2` versus `2.0` don't matter. Lists keep their order, and booleans only match booleans:
+
+```python
+from regression_shield import evaluate_trace
+
+scenario = {
+    "scenario_id": "order",
+    "expected_arguments": {"place_order": {"items": [{"sku": "A-1", "qty": 2}], "gift_wrap": True}},
+}
+trace = [{"action": {"name": "place_order", "args": {"items": [{"qty": 2.0, "sku": "a-1"}], "gift_wrap": 1}},
+          "observation": "PLACED"}]
+print(*evaluate_trace(scenario, trace).failures, sep="\n")
+```
+
+```text
+Argument correctness 0.50 < 0.85: place_order.gift_wrap was 1, expected True
+```
+
 ## Check the answer
 
 ### Catch "done!" after a failed call
@@ -127,6 +188,33 @@ print(*evaluate_trace({"scenario_id": "refund_answer"}, trace).failures, sep="\n
 Reasoning faithfulness 0.00 < 0.85: Final response claims success right after an error
 ```
 
+A result counts as a failure when it starts with `ERROR`, when a JSON result reports one (an `error` field, `"success": false`, a status like `"declined"`, an HTTP error code, a non-zero `exit_code`), or when the text says so ("failed", "403 Forbidden"). `"error": null`, "0 errors" and `error_rate` don't count.
+
+### Catch claims the trace contradicts
+
+A claim about a specific tool is checked against that tool's own result, even after other calls. Messages the agent sends (email, reply, notify... tools) are checked too: this agent's refund failed, and it told the customer it went through.
+
+```python
+from regression_shield import evaluate_trace
+
+trace = {
+    "steps": [
+        {"action": {"name": "issue_refund", "args": {"order_id": "A-1"}},
+         "observation": '{"status": "failed", "error": "card_expired"}'},
+        {"action": {"name": "send_email", "args": {"to": "jo@shop.example", "body": "Your refund has been processed."}},
+         "observation": "sent"},
+    ],
+    "final_response": "Your refund has been issued and I've emailed you a confirmation.",
+}
+print(*evaluate_trace({"scenario_id": "refund_email"}, trace).failures, sep="\n")
+```
+
+```text
+Reasoning faithfulness 0.00 < 0.85: Step 2: message sent with 'send_email' claims 'issue_refund' succeeded, but it failed (step 1); Final response claims 'issue_refund' succeeded, but it failed (step 1)
+```
+
+A claim that an action was done by a tool that never ran ("your order has been refunded", "I called export_data") is flagged too, for the tools the trace or the scenario names. "I've emailed you" stays fine here: that call succeeded.
+
 This check reads wording, not meaning. An answer that says "refunded $500" when the tool refunded $50 needs the LLM judge (next recipe).
 
 ### Judge answers with a local model
@@ -140,7 +228,40 @@ export JUDGE_MODEL=qwen2.5:3b
 regshield eval scenarios.json --llm-judge
 ```
 
-In Python, pass `use_llm_judge=True` to `evaluate_trace`. If the judge can't answer (rate limit, bad reply), the scenario fails unless you pass `judge_on_error="pass"`.
+In Python, pass `use_llm_judge=True` to `evaluate_trace`. If the judge can't answer (rate limit, bad reply), the scenario fails unless you pass `judge_on_error="pass"`. A small local model can be slow: raise the 30-second limit with `judge_timeout=120` or `--judge-timeout 120`. Each verdict also records the judge's own token usage and cost (`report.judge_audit["usage"]`, `["cost_usd"]`).
+
+## Cost
+
+### Cap what a run may cost
+
+Record each model call's token usage with the trace (`llm_calls`) and set a budget. The LangChain/LangGraph handler and `instrument_smolagents` record usage for you; elsewhere call `recorder.llm_response(response)` with the SDK's response.
+
+```python
+from regression_shield import evaluate_trace
+
+trace = {
+    "steps": [{"action": {"name": "export_report", "args": {"month": "2026-09"}}, "observation": "exported"}],
+    "llm_calls": [{"model": "gpt-4o", "input_tokens": 9000, "output_tokens": 300}] * 5,
+}
+scenario = {"scenario_id": "monthly_report", "max_cost_usd": 0.10, "max_llm_calls": 4}
+report = evaluate_trace(scenario, trace)
+print(report.format())
+```
+
+```text
+FAILED  monthly_report  (composite 1.00)
+  tool_selection          1.00
+  argument_correctness    1.00
+  call_ordering           1.00
+  step_efficiency         1.00
+  reasoning_faithfulness  1.00
+  pattern checks: Budget FAIL
+  cost: $0.1275 (5 LLM calls, 46,500 tokens)
+Failures:
+  - Budget: Cost $0.1275 is over the $0.1000 budget (gpt-4o $0.1275); 5 LLM calls (max 4)
+```
+
+Calls are priced from a bundled snapshot of public list prices (`report.cost` shows which entry matched). A cost the provider reported in the trace wins, and you can set your own prices, including for paid tools: `evaluate_trace(..., pricing={"models": {"my-finetune*": {"input": 1.0, "output": 4.0}}, "tools": {"web_search": 0.005}})`, in USD per million tokens and per call. `max_tokens` caps input plus output tokens.
 
 ## Agent patterns
 
@@ -363,6 +484,73 @@ PASS  deploy_gate  (composite 1.00)
 ```
 
 `regshield eval` exits with 0 when everything passes, 1 when a scenario fails or a regression trace slips through, and 2 on bad input.
+
+### Run the agent several times
+
+An agent that passes once can fail the next run. Record the same task a few times and evaluate the runs together:
+
+```python
+from regression_shield import evaluate_runs
+
+scenario = {"scenario_id": "refund", "expected_arguments": {"issue_refund": {"amount": 50}}}
+runs = [[{"action": {"name": "issue_refund", "args": {"amount": amount}}, "observation": "REFUNDED"}]
+        for amount in (50, 50, 500, 50)]
+print(evaluate_runs(scenario, runs).format())
+```
+
+```text
+FAILED  refund  (3/4 runs passed, pass rate 0.75, required 1.00)
+  run 1: PASSED
+  run 2: PASSED
+  run 3: FAILED  Argument correctness 0.00 < 0.85: issue_refund.amount was 500, expected 50
+  run 4: PASSED
+Failures:
+  - 3/4 runs passed (pass rate 0.75, required 1.00)
+  - Argument correctness in 1/4 runs
+```
+
+By default every run must pass. Pass `min_pass_rate=0.8` to accept some failures. In a scenario file, give an item `traces` (a list of runs) instead of `trace`; `regshield eval --min-pass-rate 0.8` sets the rate.
+
+### Roll out a new check without failing CI
+
+List checks in `warn_only` to report their failures as warnings while you tune them:
+
+```python
+from regression_shield import evaluate_trace
+
+scenario = {"scenario_id": "refund", "max_tool_calls": {"issue_refund": 1}, "warn_only": ["policy"]}
+trace = [{"action": {"name": "issue_refund", "args": {"order_id": "A-1"}}, "observation": "REFUNDED"}] * 2
+report = evaluate_trace(scenario, trace)
+print(report.passed)
+print(*report.warnings, sep="\n")
+```
+
+```text
+True
+Policy: 'issue_refund' was called 2 times (max 1)
+```
+
+`warn_only` takes the five metric names (`reasoning_faithfulness`...), the pattern checks (`policy`, `human_approval`, `budget`...) and `llm_judge`.
+
+### Share settings between pytest and CI
+
+Put thresholds, judge settings and prices in `pyproject.toml` (or a `regshield.toml`), and both `evaluate_trace` and `regshield eval` use them. Arguments and command-line flags still win:
+
+```toml
+[tool.regshield]
+min_tool_selection = 0.9
+judge_model = "qwen2.5:3b"
+judge_base_url = "http://127.0.0.1:11434/v1"
+judge_timeout = 120
+
+[tool.regshield.pricing.models]
+"qwen*" = { input = 0, output = 0 }
+
+[tool.regshield.pricing.tools]
+web_search = 0.005
+```
+
+API keys stay in environment variables. See [Configuration](reference.md#configuration-file) for every setting.
 
 ### Set a stricter threshold
 

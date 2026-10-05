@@ -79,13 +79,28 @@ def _wrap_tools(agent: Any, recorder: TraceRecorder, owner: str | None, final: b
     logger.debug("Instrumented %d tool(s) of %s", wrapped, owner or getattr(agent, "name", None) or "agent")
 
 
+def _record_usage(memory_step: Any, recorder: TraceRecorder, model: str, owner: str | None) -> None:
+    """The token usage of a step's model call (smolagents keeps it on each memory step)."""
+    usage = getattr(memory_step, "token_usage", None)
+    input_tokens = getattr(usage, "input_tokens", None)
+    output_tokens = getattr(usage, "output_tokens", None)
+    if isinstance(input_tokens, int) and isinstance(output_tokens, int) and (input_tokens or output_tokens):
+        recorder.llm_call(model, input_tokens, output_tokens, agent=owner)
+
+
 def _attach_step_callback(agent: Any, recorder: TraceRecorder, owner: str | None) -> None:
     """After each of the agent's steps, give the steps it recorded the model's output as
-    their thought, and group them as parallel when the model requested several calls."""
+    their thought, group them as parallel when the model requested several calls, and
+    record the step's token usage."""
     seen_list, seen_count = recorder.steps, len(recorder.steps)
+    model = str(getattr(getattr(agent, "model", None), "model_id", None) or "unknown")
+
+    def on_planning(memory_step: Any, **kwargs: Any) -> None:
+        _record_usage(memory_step, recorder, model, owner)
 
     def on_step(memory_step: Any, **kwargs: Any) -> None:
         nonlocal seen_list, seen_count
+        _record_usage(memory_step, recorder, model, owner)
         if seen_list is not recorder.steps:  # a new run reset the recorder (reset() starts a new list)
             seen_list, seen_count = recorder.steps, 0
         new_steps = [step for step in recorder.steps[seen_count:] if step.get("agent") == owner]
@@ -102,9 +117,10 @@ def _attach_step_callback(agent: Any, recorder: TraceRecorder, owner: str | None
 
     callbacks: Any = getattr(agent, "step_callbacks", None)
     if hasattr(callbacks, "register"):  # smolagents >= 1.20
-        from smolagents.memory import ActionStep
+        from smolagents.memory import ActionStep, PlanningStep
         callbacks.register(ActionStep, on_step)
-    elif isinstance(callbacks, list):
+        callbacks.register(PlanningStep, on_planning)
+    elif isinstance(callbacks, list):  # older versions call every callback for every kind of step
         callbacks.append(on_step)
 
 

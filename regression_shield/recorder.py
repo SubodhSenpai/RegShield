@@ -79,6 +79,7 @@ class TraceRecorder:
         """Clear everything recorded so far."""
         with self._lock:
             self.steps: list[dict[str, Any]] = []
+            self.llm_calls: list[dict[str, Any]] = []  # token usage, kept apart from the steps
             self.final_response = ""
             self.current_agent: str | None = self._initial_agent
             self.current_node: str | None = None
@@ -130,17 +131,58 @@ class TraceRecorder:
         return step
 
     def tool_call(self, name: str, args: dict[str, Any] | None = None, observation: Any = "",
-                  *, thought: str | None = None, agent: str | None = None) -> dict[str, Any]:
+                  *, thought: str | None = None, agent: str | None = None,
+                  cost_usd: float | None = None) -> dict[str, Any]:
         """Record a tool call and what it returned (use ``"ERROR: ..."`` for failures).
 
         ``agent`` names who made the call; it defaults to the current agent. Pass it
         when agents run concurrently, so calls aren't credited to the wrong one.
+        ``cost_usd`` is what the call cost, for paid APIs (search, SMS, data providers).
         """
         action = {"type": "tool_call", "name": name, "args": dict(args or {})}
         fields: dict[str, Any] = {"observation": _jsonable(observation)}
         if agent:
             fields["agent"] = agent
+        if cost_usd is not None:
+            fields["cost_usd"] = float(cost_usd)
         return self._add(action, thought, **fields)
+
+    def llm_call(self, model: str, input_tokens: int = 0, output_tokens: int = 0, *,
+                 cached_input_tokens: int = 0, cache_write_tokens: int = 0,
+                 cost_usd: float | None = None, agent: str | None = None) -> dict[str, Any]:
+        """Record the token usage of one model call, for cost tracking and budgets.
+
+        ``input_tokens`` counts all input tokens, including ``cached_input_tokens``
+        (read from the provider's prompt cache) and ``cache_write_tokens``. Pass
+        ``cost_usd`` when the provider reports the real cost; otherwise RegShield
+        prices the call from the model's list price. Usage is kept apart from the
+        steps, so it never changes step numbers.
+        """
+        call: dict[str, Any] = {"model": str(model), "input_tokens": int(input_tokens),
+                                "output_tokens": int(output_tokens)}
+        if cached_input_tokens:
+            call["cached_input_tokens"] = int(cached_input_tokens)
+        if cache_write_tokens:
+            call["cache_write_tokens"] = int(cache_write_tokens)
+        if cost_usd is not None:
+            call["cost_usd"] = float(cost_usd)
+        agent = agent or self.current_agent
+        if agent:
+            call["agent"] = agent
+        with self._lock:
+            self.llm_calls.append(call)
+        logger.debug("Recorded LLM call: %s, %d in / %d out", call["model"], call["input_tokens"], call["output_tokens"])
+        return call
+
+    def llm_response(self, response: Any, *, model: str | None = None, agent: str | None = None) -> dict[str, Any] | None:
+        """Record the token usage of a model response: an OpenAI, Anthropic or Gemini SDK
+        response, a LangChain message, or a dict of one. Returns the record, or None if
+        the response has no usage (nothing is recorded then)."""
+        usage = usage_from_response(response)
+        if usage is None:
+            return None
+        reported_model = usage.pop("model", None)
+        return self.llm_call(model or reported_model or "unknown", agent=agent, **usage)
 
     def plan(self, steps: Iterable[Any], *, thought: str | None = None) -> dict[str, Any]:
         """Record a plan: tool names in the order the agent intends to run them."""
@@ -184,15 +226,17 @@ class TraceRecorder:
 
     # -- tools -----------------------------------------------------------------
 
-    def wrap(self, fn: Callable | None = None, *, name: str | None = None, agent: str | None = None) -> Callable:
+    def wrap(self, fn: Callable | None = None, *, name: str | None = None, agent: str | None = None,
+             cost_usd: float | None = None) -> Callable:
         """Wrap a tool so each call is recorded with its arguments and result or error.
 
         Use as ``@recorder.tool``, ``@recorder.tool(name="search")`` or
         ``recorder.wrap(fn)``. Exceptions are recorded and re-raised unchanged.
         ``agent`` credits every call to that agent (see ``tool_call``).
+        ``cost_usd`` is the price of each call, for paid APIs.
         """
         if fn is None:
-            return lambda f: self.wrap(f, name=name, agent=agent)
+            return lambda f: self.wrap(f, name=name, agent=agent, cost_usd=cost_usd)
         tool_name: str = name or getattr(fn, "__name__", None) or "tool"
         try:
             signature: inspect.Signature | None = inspect.signature(fn)
@@ -211,7 +255,7 @@ class TraceRecorder:
                 except Exception as err:
                     record_error(call_args, err)
                     raise
-                self.tool_call(tool_name, call_args, result, agent=agent)
+                self.tool_call(tool_name, call_args, result, agent=agent, cost_usd=cost_usd)
                 return result
             return async_wrapper
 
@@ -223,7 +267,7 @@ class TraceRecorder:
             except Exception as err:
                 record_error(call_args, err)
                 raise
-            self.tool_call(tool_name, call_args, result, agent=agent)
+            self.tool_call(tool_name, call_args, result, agent=agent, cost_usd=cost_usd)
             return result
         return wrapper
 
@@ -235,3 +279,67 @@ class TraceRecorder:
         """The recorded steps, ready for ``evaluate_trace``."""
         with self._lock:
             return [dict(step) for step in self.steps]
+
+    def to_dict(self) -> dict[str, Any]:
+        """The whole run as one JSON-ready dict: steps, final response and LLM usage.
+        Save it as a ``trace`` in a scenario file for ``regshield eval``."""
+        trace: dict[str, Any] = {"steps": self.get_trace(), "final_response": self.final_response}
+        with self._lock:
+            if self.llm_calls:
+                trace["llm_calls"] = [dict(call) for call in self.llm_calls]
+        return trace
+
+
+def _field(obj: Any, *names: str) -> Any:
+    """The first of ``names`` found on an object or in a dict."""
+    for name in names:
+        value = obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _count(value: Any) -> int:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
+def usage_from_response(response: Any) -> dict[str, Any] | None:
+    """Token usage of a model response, in RegShield's fields, or None if it has none.
+
+    Understands OpenAI chat and Responses API objects, Anthropic messages, Gemini
+    ``usage_metadata``, LangChain messages (``usage_metadata``) and dicts of them.
+    ``input_tokens`` always includes cached tokens (Anthropic reports them apart).
+    """
+    usage = _field(response, "usage_metadata", "usage")
+    if usage is None:
+        return None
+    model = _field(response, "model", "model_version")
+    if model is None:
+        metadata = _field(response, "response_metadata") or {}
+        model = _field(metadata, "model_name", "model")
+    record: dict[str, Any]
+    if _field(usage, "prompt_token_count", "candidates_token_count") is not None:  # Gemini
+        record = {"input_tokens": _count(_field(usage, "prompt_token_count")),
+                  "output_tokens": _count(_field(usage, "candidates_token_count"))
+                  + _count(_field(usage, "thoughts_token_count")),
+                  "cached_input_tokens": _count(_field(usage, "cached_content_token_count"))}
+    elif _field(usage, "cache_read_input_tokens", "cache_creation_input_tokens") is not None:  # Anthropic
+        cached = _count(_field(usage, "cache_read_input_tokens"))
+        written = _count(_field(usage, "cache_creation_input_tokens"))
+        record = {"input_tokens": _count(_field(usage, "input_tokens")) + cached + written,
+                  "output_tokens": _count(_field(usage, "output_tokens")),
+                  "cached_input_tokens": cached, "cache_write_tokens": written}
+    else:  # OpenAI chat / Responses API, LangChain usage_metadata
+        details = _field(usage, "prompt_tokens_details", "input_tokens_details", "input_token_details") or {}
+        record = {"input_tokens": _count(_field(usage, "prompt_tokens", "input_tokens")),
+                  "output_tokens": _count(_field(usage, "completion_tokens", "output_tokens")),
+                  "cached_input_tokens": _count(_field(details, "cached_tokens", "cache_read")),
+                  "cache_write_tokens": _count(_field(details, "cache_write_tokens", "cache_creation"))}
+    if not record["input_tokens"] and not record["output_tokens"]:
+        return None
+    cost = _field(usage, "cost")  # OpenRouter reports the real cost
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        record["cost_usd"] = float(cost)
+    if model:
+        record["model"] = str(model)
+    return {key: value for key, value in record.items() if value or key in ("input_tokens", "output_tokens")}

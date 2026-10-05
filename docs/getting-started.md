@@ -111,7 +111,9 @@ def test_deploy_gate():
     evaluate_trace(scenario, trace).raise_for_failures()
 ```
 
-LLM agents don't behave the same on every run. Run important scenarios several times, or on a set of inputs, and look at the pass rate.
+LLM agents don't behave the same on every run. Run important scenarios several times, or on a set of inputs, and look at the pass rate: `evaluate_runs(scenario, traces)` evaluates the runs together and fails unless enough of them pass ([recipe](cookbook.md#run-the-agent-several-times)).
+
+Thresholds and judge settings shared by your tests and CI can go in `pyproject.toml` under `[tool.regshield]` ([configuration](reference.md#configuration-file)).
 
 ## 5. Gate your CI
 

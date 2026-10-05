@@ -18,13 +18,14 @@ from regression_shield.adapters.smolagents import (
     extract_smolagents_trace,
     instrument_smolagents,
 )
-from regression_shield.core.evaluator import AgentTraceEvaluator, evaluate_trace
+from regression_shield.core.evaluator import AgentTraceEvaluator, evaluate_runs, evaluate_trace
 from regression_shield.core.judge import LLMJudge
 from regression_shield.core.patterns import run_pattern_checks
 from regression_shield.log import enable_logging
 from regression_shield.models import (
     EvaluationFailed,
     EvaluationReport,
+    RunsReport,
     ScenarioSpec,
     StepTrace,
     save_reports,
@@ -34,7 +35,7 @@ from regression_shield.recorder import TraceRecorder
 if TYPE_CHECKING:  # for type checkers and IDEs; at runtime it's loaded by __getattr__ below
     from regression_shield.adapters.langchain import RegressionShieldCallbackHandler
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "AgentTraceEvaluator",
@@ -42,10 +43,12 @@ __all__ = [
     "EvaluationReport",
     "LLMJudge",
     "RegressionShieldCallbackHandler",
+    "RunsReport",
     "ScenarioSpec",
     "StepTrace",
     "TraceRecorder",
     "enable_logging",
+    "evaluate_runs",
     "evaluate_trace",
     "extract_smolagents_trace",
     "instrument_smolagents",

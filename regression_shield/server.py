@@ -29,6 +29,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from regression_shield import __version__
+from regression_shield.config import setting
 from regression_shield.core.evaluator import JUDGE_ON_ERROR_CHOICES, AgentTraceEvaluator
 from regression_shield.core.judge import LLMJudge
 from regression_shield.models import DEFAULT_REPORT_PATH, load_report_file, save_reports
@@ -63,18 +64,20 @@ class DashboardSettings:
     model: str | None = None
     base_url: str | None = None
     use_llm_judge: bool = False
-    judge_on_error: str = "fail"
+    judge_on_error: str | None = None  # None: the config file, then "fail"
+    judge_timeout: float | None = None
 
     @property
     def report_path(self) -> str:
         return os.path.join(self.workspace, DEFAULT_REPORT_PATH)
 
     def judge(self) -> LLMJudge:
-        return LLMJudge(api_key=self.api_key, model=self.model, base_url=self.base_url)
+        return LLMJudge(api_key=self.api_key, model=self.model, base_url=self.base_url, timeout=self.judge_timeout)
 
-    def evaluator(self, use_llm_judge: bool = False, **thresholds: float) -> AgentTraceEvaluator:
+    def evaluator(self, use_llm_judge: bool = False, **thresholds: Any) -> AgentTraceEvaluator:
         return AgentTraceEvaluator(use_llm_judge=use_llm_judge, api_key=self.api_key, model=self.model,
-                                   base_url=self.base_url, judge_on_error=self.judge_on_error, **thresholds)
+                                   base_url=self.base_url, judge_on_error=self.judge_on_error,
+                                   judge_timeout=self.judge_timeout, **thresholds)
 
 
 def run_demo(settings: DashboardSettings) -> dict[str, Any]:
@@ -170,18 +173,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
         else:
             self._send_json({"error": "Not found"}, 404)
 
-    def _read_json(self) -> Any:
+    def _read_body(self) -> bytes:
+        """The request body. Read before any reply: answering first and closing with unread
+        data makes the client see a connection reset instead of the response."""
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_BODY_BYTES:
+            raise _HTTPError(413, f"Request body over {MAX_BODY_BYTES // (1024 * 1024)} MB")
+        return self.rfile.read(length) if length > 0 else b""
+
+    def _parse_json(self, body: bytes) -> Any:
         # Browsers can send text/plain or form posts cross-site without asking;
         # requiring JSON means only same-origin pages and API clients get through.
         content_type = self.headers.get("Content-Type", "").split(";")[0].strip().lower()
         if content_type != "application/json":
             raise _HTTPError(415, "Content-Type must be application/json")
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_BODY_BYTES:
-            raise _HTTPError(413, f"Request body over {MAX_BODY_BYTES // (1024 * 1024)} MB")
-        return json.loads(self.rfile.read(length) or b"{}")
+        return json.loads(body or b"{}")
 
     def do_POST(self) -> None:
+        try:
+            body = self._read_body()
+        except _HTTPError as err:
+            self.close_connection = True  # the oversized body is never read
+            self._send_json({"error": err.message}, err.status)
+            return
         if self._reject_foreign_host():
             return
         path = urlsplit(self.path).path
@@ -191,7 +205,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Not found"}, 404)
             return
         try:
-            self._send_json(handlers[path](self._read_json()))
+            self._send_json(handlers[path](self._parse_json(body)))
         except _HTTPError as err:
             self._send_json({"error": err.message}, err.status)
         except (ValueError, TypeError) as err:  # bad JSON, bad scenario or trace, judge misconfigured
@@ -248,22 +262,26 @@ def start_server(
     port: int = 8000,
     host: str = "127.0.0.1",
     open_browser: bool = False,
-    use_llm_judge: bool = False,
+    use_llm_judge: bool | None = None,
     api_key: str | None = None,
     model: str | None = None,
     base_url: str | None = None,
-    judge_on_error: str = "fail",
+    judge_on_error: str | None = None,
+    judge_timeout: float | None = None,
 ) -> None:
     """Run the dashboard until Ctrl+C.
 
     ``host`` 127.0.0.1 (default) accepts connections from this machine only;
     "0.0.0.0" exposes the dashboard to other machines, with no authentication.
     With ``use_llm_judge``, traces posted to the API can be judged by an LLM.
+    Options left as None come from the project config file, then the defaults.
     """
+    judge_on_error = setting("judge_on_error", judge_on_error)
     if judge_on_error not in JUDGE_ON_ERROR_CHOICES:
         raise ValueError(f"judge_on_error must be one of {JUDGE_ON_ERROR_CHOICES}, got {judge_on_error!r}")
     settings = DashboardSettings(api_key=api_key, model=model, base_url=base_url,
-                                 use_llm_judge=use_llm_judge, judge_on_error=judge_on_error)
+                                 use_llm_judge=bool(setting("llm_judge", use_llm_judge)),
+                                 judge_on_error=judge_on_error, judge_timeout=judge_timeout)
     if use_llm_judge and not settings.judge().api_key:
         raise ValueError("--llm-judge needs an API key: pass --api-key or set OPENROUTER_API_KEY / OPENAI_API_KEY.")
 
@@ -276,7 +294,8 @@ def start_server(
     if not httpd.loopback_only:
         print(f"Warning: listening on {host or 'all interfaces'}. Anyone who can reach this machine "
               "can use the dashboard and API; there is no authentication.")
-    print("Press Ctrl+C to stop.")
+    # Flush now: serve_forever() blocks, and piped output (Docker, systemd) would hold the banner back
+    print("Press Ctrl+C to stop.", flush=True)
     if open_browser:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:

@@ -757,6 +757,13 @@
       color: var(--danger-dot);
       font-weight: bold;
     }
+    /* Warnings: checks listed in warn_only report here instead of failing */
+    .failures-box.warnings-box {
+      border-left-color: var(--warning);
+    }
+    .warnings-box .failures-list li::before {
+      color: var(--warning);
+    }
 
     /* Delta Matrix Table */
     .table-container {
@@ -1703,6 +1710,30 @@
           </div>
         `;
       }
+      if (scenario.warnings && scenario.warnings.length > 0) {
+        failuresHtml += `
+          <div class="failures-box warnings-box">
+            <div class="failures-title">Warnings (warn_only, not failing)</div>
+            <ul class="failures-list">
+              ${scenario.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join("")}
+            </ul>
+          </div>
+        `;
+      }
+
+      // Tokens and cost, when the run recorded LLM usage or paid tool calls
+      let costHtml = "";
+      if (d.cost) {
+        const usd = Number(d.cost.total_usd || 0);
+        const money = usd < 100 ? usd.toFixed(4) : usd.toFixed(2);
+        const unpriced = (d.cost.unpriced_models || []).length
+          ? ` (no price for ${d.cost.unpriced_models.map(escapeHtml).join(", ")})` : "";
+        costHtml = `
+            <div class="mini-metric" title="${escapeHtml(`${d.cost.llm_calls} LLM calls, ${Number(d.cost.total_tokens || 0).toLocaleString()} tokens${unpriced}`)}">
+              <span class="mini-metric-label">Cost${unpriced ? " (partial)" : ""}</span>
+              <span class="mini-metric-value">$${money}</span>
+            </div>`;
+      }
 
       let finalAnswerHtml = "";
       if (d.final_response) {
@@ -1759,6 +1790,7 @@
               <span class="mini-metric-label">Reasoning Faithfulness</span>
               <span class="mini-metric-value">${(m.reasoning_faithfulness || 0).toFixed(2)}</span>
             </div>
+            ${costHtml}
           </div>
 
           ${renderPatternsPanel(scenario.patterns)}

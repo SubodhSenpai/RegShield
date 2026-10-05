@@ -162,10 +162,13 @@ jobs:
 regshield serve
 ```
 
-The dashboard at `http://localhost:8000` shows each scenario's metrics, pattern checks and full trace. It reads `reports/latest_report.json` in the folder you start it from; `regshield eval` writes that file, and so does `evaluate_trace(..., save_report=True)`.
+The dashboard at `http://localhost:8000` shows each scenario's metrics, pattern checks and full trace. It reads `reports/latest_report.json` in the folder you start it from; `regshield eval` writes that file, and so does `evaluate_trace(..., save_report=True)`. It runs on your machine only: no account, nothing uploaded.
+
+![The RegShield dashboard showing a failed scenario and the rules it broke](images/dashboard.png)
 
 ## Next
 
+- Ready-made checks for common problems: [Cookbook](cookbook.md)
 - Plans, handoffs, approvals, routers, graphs or critique loops: [Agentic patterns](patterns.md)
 - Framework details: [Integrations](integrations.md)
 - Nine real agents run against a local LLM: [Examples](../examples/README.md)
